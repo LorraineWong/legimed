@@ -118,15 +118,20 @@ def build_demo(model, tokenizer):
             with gr.Column(scale=2):
                 gr.Markdown("### Your personalized guide")
                 output = gr.Markdown(
-                    value="_Enter a drug name and your profile, then click Generate._"
+                    value="_Enter a drug name and fill in your profile, then click **Generate my guide**._"
                 )
+
+        output_status = gr.Markdown(
+            value="",
+            visible=False
+        )
 
         submit_btn.click(
             fn=_run,
             inputs=[drug_input, age_group, pregnant,
                     kidney_issue, liver_issue, other_meds],
             outputs=output
-        )
+        ).then(fn=None)
 
         gr.Markdown("_Legimed · Gemma 4 Good Hackathon 2026 · Apache 2.0 · [GitHub](https://github.com/LorraineWong/legimed)_")
 
