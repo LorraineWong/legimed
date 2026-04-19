@@ -1,28 +1,22 @@
 import gradio as gr
 from dailymed import get_drug_leaflet
-from personalise import personalise, generate_personal_summary
+from personalise import personalise
 from schema import UserProfile
 
 
 def run_legimed(drug_name, age_group, pregnant, kidney_issue,
                 liver_issue, other_meds, model, tokenizer):
     """Main pipeline function called by Gradio."""
-    from extract import extract_drug_info_robust
-
     try:
-        # Validate input
         if not drug_name.strip():
-            return "⚠️ Please enter a drug name first."
+            return "Please enter a drug name first."
 
-        # Step 1: Fetch leaflet from DailyMed
         leaflet_text = get_drug_leaflet(drug_name.strip())
         if not leaflet_text:
-            return f"❌ '{drug_name}' not found in DailyMed. Please check the spelling and try again."
+            return f"'{drug_name}' not found in DailyMed. Please check the spelling."
 
-        # Step 2: Extract structured info with Gemma 4
-        drug_info = extract_drug_info_robust(leaflet_text, model, tokenizer)
+        from extract import extract_and_summarise
 
-        # Step 3: Build user profile
         other_meds_list = [m.strip() for m in other_meds.split(",") if m.strip()]
         profile = UserProfile(
             age_group=age_group,
@@ -32,26 +26,22 @@ def run_legimed(drug_name, age_group, pregnant, kidney_issue,
             other_medications=other_meds_list
         )
 
-        # Step 4: Personalise warning order
-        drug_info = personalise(drug_info, profile)
-
-        # Step 5: Generate AI personalised summary
-        personal_summary = generate_personal_summary(
-            drug_info, profile, model, tokenizer
+        drug_info, personal_summary = extract_and_summarise(
+            leaflet_text, profile, model, tokenizer
         )
 
-        # Step 6: Format output
+        drug_info = personalise(drug_info, profile)
+
         output = f"# {drug_info.drug_name}\n"
         output += f"**Drug class:** {drug_info.drug_class}  \n"
         output += f"**Active ingredient:** {drug_info.active_ingredient}\n\n"
         output += "---\n\n"
 
-        # AI personalised summary — the key differentiator
-        output += "## 🤖 Your personal summary\n"
-        output += f"> {personal_summary}\n\n"
-        output += "---\n\n"
+        if personal_summary:
+            output += "## Your personal summary\n"
+            output += f"> {personal_summary}\n\n"
+            output += "---\n\n"
 
-        # When to take
         output += "## When to take\n"
         for d in drug_info.dosage_instructions:
             food = "with food" if d.with_food else "without food"
@@ -59,7 +49,6 @@ def run_legimed(drug_name, age_group, pregnant, kidney_issue,
             if d.notes:
                 output += f"  _{d.notes}_\n"
 
-        # Side effects
         output += "\n---\n\n## Side effects\n"
         severity_label = {
             "HIGH": "🔴 Seek emergency help",
@@ -70,7 +59,6 @@ def run_legimed(drug_name, age_group, pregnant, kidney_issue,
             label = severity_label.get(se.severity, "🟢 Monitor")
             output += f"- {label} — **{se.name}**: {se.description}\n"
 
-        # Food & drink
         output += "\n---\n\n## Food & drink\n"
         action_label = {
             "avoid": "🚫 Avoid",
@@ -81,19 +69,16 @@ def run_legimed(drug_name, age_group, pregnant, kidney_issue,
             label = action_label.get(fi.action, "⚠️ Caution")
             output += f"- {label} — **{fi.substance}**: {fi.reason}\n"
 
-        # Personalised warnings
         if drug_info.warnings:
             output += "\n---\n\n## Warnings\n"
             for w in drug_info.warnings:
                 output += f"- ⚠️ {w.text}\n"
 
-        # Emergency
         if drug_info.emergency_signs:
             output += "\n---\n\n## 🚨 Emergency — seek help immediately if:\n"
             for e in drug_info.emergency_signs:
                 output += f"- {e}\n"
 
-        # Contraindications
         if drug_info.contraindications:
             output += "\n---\n\n## Do not take if you have:\n"
             for c in drug_info.contraindications:
@@ -103,7 +88,7 @@ def run_legimed(drug_name, age_group, pregnant, kidney_issue,
         return output
 
     except Exception as e:
-        return f"Something went wrong: {str(e)}\n\nPlease try again or check the drug name."
+        return f"Something went wrong: {str(e)}\n\nPlease try again."
 
 
 def build_demo(model, tokenizer):
