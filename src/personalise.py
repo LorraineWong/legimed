@@ -143,3 +143,46 @@ Write in plain English a patient can understand. No medical jargon. No bullet po
     ).strip()
 
     return response
+
+
+def generate_personal_summary(drug_info, profile) -> str:
+    """
+    Generate a personalised plain-English summary using Python logic.
+    No second AI call needed — saves GPU memory.
+    """
+    lines = []
+
+    # Most important dosage fact
+    if drug_info.dosage_instructions:
+        d = drug_info.dosage_instructions[0]
+        food_str = "with food" if d.with_food else "without food"
+        lines.append(
+            f"Take {d.amount} of {drug_info.drug_name} every {d.time_of_day}, {food_str}, at the same time each day."
+        )
+
+    # Most relevant risk for this profile
+    risk_parts = []
+    if profile.age_group == "elderly":
+        risk_parts.append("as a senior patient, fall-related bleeding is a serious concern")
+    if profile.kidney_issue:
+        risk_parts.append("your kidney condition may affect how this drug is processed")
+    if profile.pregnant:
+        risk_parts.append("this drug may not be safe during pregnancy — confirm with your doctor immediately")
+    if profile.other_medications:
+        meds = ", ".join(profile.other_medications[:2])
+        risk_parts.append(f"taking {meds} alongside this drug requires careful monitoring")
+
+    if risk_parts:
+        lines.append("Important for you: " + "; ".join(risk_parts) + ".")
+    elif drug_info.warnings:
+        lines.append(drug_info.warnings[0].text + ".")
+
+    # Key food warning
+    avoid_foods = [fi.substance for fi in drug_info.food_interactions if fi.action == "avoid"]
+    if avoid_foods:
+        food_str = ", ".join(avoid_foods[:2])
+        lines.append(f"Avoid {food_str} while taking this medication.")
+    elif drug_info.emergency_signs:
+        lines.append(f"Seek emergency help immediately if you experience: {drug_info.emergency_signs[0]}.")
+
+    return " ".join(lines)

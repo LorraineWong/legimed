@@ -1,6 +1,6 @@
 import gradio as gr
 from dailymed import get_drug_leaflet
-from personalise import personalise
+from personalise import personalise, generate_personal_summary
 from schema import UserProfile
 
 
@@ -15,8 +15,6 @@ def run_legimed(drug_name, age_group, pregnant, kidney_issue,
         if not leaflet_text:
             return f"'{drug_name}' not found in DailyMed. Please check the spelling."
 
-        from extract import extract_and_summarise
-
         other_meds_list = [m.strip() for m in other_meds.split(",") if m.strip()]
         profile = UserProfile(
             age_group=age_group,
@@ -26,11 +24,10 @@ def run_legimed(drug_name, age_group, pregnant, kidney_issue,
             other_medications=other_meds_list
         )
 
-        drug_info, personal_summary = extract_and_summarise(
-            leaflet_text, profile, model, tokenizer
-        )
-
+        from extract import extract_drug_info_robust
+        drug_info = extract_drug_info_robust(leaflet_text, model, tokenizer)
         drug_info = personalise(drug_info, profile)
+        personal_summary = generate_personal_summary(drug_info, profile)
 
         output = f"# {drug_info.drug_name}\n"
         output += f"**Drug class:** {drug_info.drug_class}  \n"
