@@ -53,66 +53,90 @@ def extract_text_from_image(pil_image: Image.Image) -> str:
 
 def guess_drug_name_from_text(text: str) -> str:
     """
-    Heuristic extraction of drug name from raw OCR text.
-    Drug names tend to appear in the first lines, ALL CAPS or Title Case,
-    short (1-3 words), near dosage markers like mg/mcg/ml.
+    Extract drug name from raw OCR text.
+    Strategy:
+      1. Look for lines near dosage markers (mg/mcg/ml) — highest confidence
+      2. Look for ALL CAPS or Title Case short lines in first 20 lines
+      3. Fall back to first non-empty line if nothing scores well
+    Penalty words filter out instructions, addresses, batch info.
     """
     lines = [l.strip() for l in text.splitlines() if l.strip()]
     if not lines:
         return ""
 
-    best = ""
-    best_score = -1
-
     penalty_words = [
-        "take", "tablet", "capsule", "store", "keep", "batch",
-        "exp", "mfg", "www", "tel", "fax", "ltd", "inc", "ptd",
-        "warning", "caution", "directions", "ingredients"
+        "take", "store", "keep", "batch", "exp", "mfg", "www",
+        "tel", "fax", "ltd", "inc", "ptd", "warning", "caution",
+        "directions", "ingredients", "manufactured", "distributed",
+        "each", "contains", "read", "leaflet", "patient"
     ]
 
-    for line in lines[:15]:
+    best = ""
+    best_score = -99
+
+    for i, line in enumerate(lines[:20]):
         score = 0
-        clean = re.sub(r'[®™©]', '', line).strip()
+        clean = re.sub(r'[®™©,.\-_|]', ' ', line).strip()
+        clean = re.sub(r'\s+', ' ', clean).strip()
         if not clean or len(clean) < 2:
             continue
 
-        word_count = len(clean.split())
-        if word_count <= 3:
+        # Lines appearing earlier on the label are more likely the drug name
+        if i < 3:
             score += 3
-        elif word_count <= 5:
+        elif i < 6:
             score += 1
-        else:
+
+        word_count = len(clean.split())
+        if word_count <= 2:
+            score += 4
+        elif word_count <= 4:
+            score += 2
+        elif word_count > 6:
             score -= 2
 
-        if clean.isupper():
-            score += 2
+        # ALL CAPS short line = strong drug name signal
+        if clean.isupper() and word_count <= 4:
+            score += 4
         elif clean.istitle():
-            score += 1
+            score += 2
 
+        # Penalise instruction-like lines
         if any(w in clean.lower() for w in penalty_words):
-            score -= 3
+            score -= 5
 
+        # Bonus: dosage marker on same line (e.g. "Warfarin 5mg")
         if re.search(r'\d+\s*(mg|mcg|ml|%|iu)', line, re.IGNORECASE):
+            score += 3
+
+        # Bonus: looks like a drug name pattern (letters only, possibly with numbers)
+        if re.match(r'^[A-Za-z][A-Za-z\s\-]+$', clean) and word_count <= 3:
             score += 2
 
         if score > best_score:
             best_score = score
+            # Take first 1-3 words only as the drug name
             best = " ".join(clean.split()[:3])
+
+    # Strip trailing dosage if attached: "Warfarin 5" -> "Warfarin"
+    best = re.sub(r'\s+\d+$', '', best).strip()
 
     return best
 
 
-def image_to_drug_name(pil_image: Image.Image) -> str:
+def image_to_drug_name(pil_image: Image.Image) -> tuple[str, str]:
     """
     Main entry point for image tab.
     Photo -> Tesseract OCR -> heuristic drug name extraction.
-    Returns drug name string ready to pass to get_drug_leaflet().
+
+    Returns:
+        (drug_name, raw_ocr_text)
+        drug_name: best guess at drug name, empty string if failed
+        raw_ocr_text: full OCR output for debugging / user review
     """
-    text = extract_text_from_image(pil_image)
-    drug_name = guess_drug_name_from_text(text)
-    if not drug_name:
-        return text[:100]
-    return drug_name
+    raw_text = extract_text_from_image(pil_image)
+    drug_name = guess_drug_name_from_text(raw_text)
+    return drug_name, raw_text
 
 
 def install_tesseract_colab():

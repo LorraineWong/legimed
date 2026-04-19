@@ -1,4 +1,5 @@
 from schema import DrugInfo, UserProfile
+import re
 
 
 def personalise(drug_info: DrugInfo, profile: UserProfile) -> DrugInfo:
@@ -50,15 +51,12 @@ def personalise(drug_info: DrugInfo, profile: UserProfile) -> DrugInfo:
 
 
 def build_profile_context(profile: UserProfile) -> str:
-    """
-    Convert UserProfile into a plain English description
-    for use in Gemma 4 personalisation prompt.
-    """
+    """Convert UserProfile into a plain English description."""
     parts = []
 
     age_map = {
         "child": "a child (under 12)",
-        "adult": "an adult (18–64)",
+        "adult": "an adult (18-64)",
         "elderly": "a senior patient (65+)"
     }
     parts.append(age_map.get(profile.age_group, "an adult"))
@@ -81,86 +79,46 @@ def build_profile_context(profile: UserProfile) -> str:
     return " ".join(parts)
 
 
-def generate_personal_summary(
-    drug_info: DrugInfo,
-    profile: UserProfile,
-    model,
-    tokenizer
-) -> str:
+def _safe_amount(amount: str) -> str:
     """
-    Use Gemma 4 to generate a personalised 3-sentence plain-language
-    summary of the most important warnings for this specific patient.
+    Return amount only if it looks like a valid dosage string.
+    Prevents garbled Gemma output from appearing in the summary sentence.
     """
-    profile_desc = build_profile_context(profile)
-
-    # Build top warnings context
-    top_warnings = drug_info.warnings[:4]
-    warnings_text = "\n".join([f"- {w.text}" for w in top_warnings])
-
-    # Build top side effects context
-    high_se = [se for se in drug_info.side_effects if se.severity == "HIGH"]
-    se_text = "\n".join([f"- {se.name}: {se.description}" for se in high_se[:3]])
-
-    # Build food interactions context
-    avoid_food = [fi for fi in drug_info.food_interactions if fi.action == "avoid"]
-    food_text = ", ".join([fi.substance for fi in avoid_food[:3]])
-
-    prompt = f"""You are a clinical pharmacist explaining medication to a patient in plain, simple English.
-
-Patient: {profile_desc}
-Drug: {drug_info.drug_name} ({drug_info.drug_class})
-
-Key warnings for this patient:
-{warnings_text}
-
-Serious side effects:
-{se_text}
-
-Foods to avoid: {food_text if food_text else "none specifically noted"}
-
-Write exactly 3 sentences:
-1. The single most important thing THIS specific patient needs to know about taking this drug safely.
-2. The specific risk or interaction most relevant to their profile (age, conditions, other medications).
-3. One clear action they should take or avoid.
-
-Write in plain English a patient can understand. No medical jargon. No bullet points. Just 3 sentences."""
-
-    inputs = tokenizer(
-        f"<start_of_turn>user\n{prompt}<end_of_turn>\n<start_of_turn>model\n",
-        return_tensors="pt"
-    ).to(model.device)
-
-    outputs = model.generate(
-        **inputs,
-        max_new_tokens=200,
-        temperature=0,
-        do_sample=False,
-    )
-
-    response = tokenizer.decode(
-        outputs[0][inputs["input_ids"].shape[-1]:],
-        skip_special_tokens=True
-    ).strip()
-
-    return response
+    if not amount:
+        return ""
+    # Must contain a digit or a known dosage word
+    if not re.search(r'\d|tablet|capsule|drop|patch|unit', amount, re.IGNORECASE):
+        return ""
+    # Must not be suspiciously long or contain semicolons / slashes
+    if len(amount) > 20 or any(c in amount for c in [';', '/', '\\']):
+        return ""
+    return amount
 
 
-def generate_personal_summary(drug_info, profile) -> str:
+def generate_personal_summary(drug_info: DrugInfo, profile: UserProfile) -> str:
     """
-    Generate a personalised plain-English summary using Python logic.
-    No second AI call needed — saves GPU memory.
+    Generate a personalised plain-English 3-sentence summary using Python logic.
+    No second AI call — saves GPU memory and is fully deterministic.
     """
     lines = []
 
-    # Most important dosage fact
+    # Sentence 1: dosage fact
     if drug_info.dosage_instructions:
         d = drug_info.dosage_instructions[0]
+        amount = _safe_amount(d.amount)
         food_str = "with food" if d.with_food else "without food"
-        lines.append(
-            f"Take {d.amount} of {drug_info.drug_name} every {d.time_of_day}, {food_str}, at the same time each day."
-        )
+        if amount:
+            lines.append(
+                f"Take {amount} of {drug_info.drug_name} every {d.time_of_day}, "
+                f"{food_str}, at the same time each day."
+            )
+        else:
+            lines.append(
+                f"Take {drug_info.drug_name} every {d.time_of_day}, "
+                f"{food_str}, at the same time each day."
+            )
 
-    # Most relevant risk for this profile
+    # Sentence 2: most relevant risk for this profile
     risk_parts = []
     if profile.age_group == "elderly":
         risk_parts.append("as a senior patient, fall-related bleeding is a serious concern")
@@ -175,14 +133,20 @@ def generate_personal_summary(drug_info, profile) -> str:
     if risk_parts:
         lines.append("Important for you: " + "; ".join(risk_parts) + ".")
     elif drug_info.warnings:
-        lines.append(drug_info.warnings[0].text + ".")
+        # Use first warning but ensure it ends with a period
+        w_text = drug_info.warnings[0].text.strip()
+        if not w_text.endswith("."):
+            w_text += "."
+        lines.append(w_text)
 
-    # Key food warning
+    # Sentence 3: key food warning or emergency sign
     avoid_foods = [fi.substance for fi in drug_info.food_interactions if fi.action == "avoid"]
     if avoid_foods:
         food_str = ", ".join(avoid_foods[:2])
         lines.append(f"Avoid {food_str} while taking this medication.")
     elif drug_info.emergency_signs:
-        lines.append(f"Seek emergency help immediately if you experience: {drug_info.emergency_signs[0]}.")
+        lines.append(
+            f"Seek emergency help immediately if you experience: {drug_info.emergency_signs[0]}."
+        )
 
     return " ".join(lines)

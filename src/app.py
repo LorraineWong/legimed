@@ -164,7 +164,6 @@ def run_legimed_from_image(pil_image, age_group, pregnant, kidney_issue,
       3. DailyMed fetches full leaflet text
       4. Gemma 4 extracts structured DrugInfo JSON (same as text tab)
       5. Personalisation engine re-prioritises warnings for user profile
-    Gemma 4 is the core AI engine throughout. OCR is pre-processing only.
     Returns: (detected_drug_name: str, html_output: str)
     """
     from extract import extract_drug_info_robust
@@ -173,12 +172,18 @@ def run_legimed_from_image(pil_image, age_group, pregnant, kidney_issue,
         return ("", "<p style='color:#991B1B;padding:1rem;'>Please upload a photo first.</p>")
 
     try:
-        drug_name = image_to_drug_name(pil_image)
-        if not drug_name.strip():
+        drug_name, raw_ocr = image_to_drug_name(pil_image)
+        drug_name = drug_name.strip()
+
+        # If heuristic failed, surface raw OCR so user can read and correct
+        if not drug_name:
+            preview = raw_ocr[:120].replace("\n", " ") if raw_ocr else ""
             return (
-                "",
-                "<p style='color:#991B1B;padding:1rem;'>Could not read drug name from image. "
-                "Please type the drug name manually in the Name tab.</p>"
+                preview,
+                f"<p style='color:#92400E;padding:1rem;background:#FEF3C7;border-radius:8px;'>"
+                f"Could not confidently detect drug name from image.<br><br>"
+                f"OCR text preview: <em>{preview}</em><br><br>"
+                f"Please edit the drug name field above and click <strong>Use this name</strong>.</p>"
             )
 
         leaflet_text = get_drug_leaflet(drug_name)
