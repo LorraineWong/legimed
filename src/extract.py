@@ -83,4 +83,8 @@ JSON OUTPUT:"""
         if di.get("time_of_day") not in valid_times:
             di["time_of_day"] = "morning"
 
+    import gc, torch
+    gc.collect()
+    torch.cuda.empty_cache()
+
     return DrugInfo(**data)
