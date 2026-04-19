@@ -83,6 +83,8 @@ def build_demo(model, tokenizer):
     """Build and return Gradio demo with model injected."""
 
     def _run(drug_name, age_group, pregnant, kidney_issue, liver_issue, other_meds):
+        if not drug_name.strip():
+            return "⚠️ Please enter a drug name first."
         return run_legimed(drug_name, age_group, pregnant, kidney_issue,
                            liver_issue, other_meds, model, tokenizer)
 
@@ -127,11 +129,16 @@ def build_demo(model, tokenizer):
         )
 
         submit_btn.click(
+            fn=lambda: "⏳ Processing... This takes about 45 seconds. Please wait.",
+            inputs=None,
+            outputs=output,
+            queue=False
+        ).then(
             fn=_run,
             inputs=[drug_input, age_group, pregnant,
                     kidney_issue, liver_issue, other_meds],
             outputs=output
-        ).then(fn=None)
+        )
 
         gr.Markdown("_Legimed · Gemma 4 Good Hackathon 2026 · Apache 2.0 · [GitHub](https://github.com/LorraineWong/legimed)_")
 
