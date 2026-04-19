@@ -1,59 +1,35 @@
-from __future__ import annotations
-
-import xml.etree.ElementTree as ET
-from typing import Optional
-
 import requests
-
-DAILYMED_BASE = "https://dailymed.nlm.nih.gov/dailymed/services/v2"
-
-# DailyMed SPL XML namespace
-SPL_NS = "urn:hl7-org:v3"
+import re
 
 
-def search_drug(drug_name: str) -> Optional[str]:
-    """Return the first set_id for drug_name from the DailyMed search API."""
-    url = f"{DAILYMED_BASE}/spls.json"
+def search_drug(drug_name: str) -> dict:
+    """Search DailyMed for a drug by name, return first result."""
+    url = "https://dailymed.nlm.nih.gov/dailymed/services/v2/spls.json"
     params = {"drug_name": drug_name, "pagesize": 1}
-    response = requests.get(url, params=params, timeout=15)
-    response.raise_for_status()
+    response = requests.get(url, params=params)
     data = response.json()
-    results = data.get("data", [])
-    if not results:
+    if not data.get("data"):
         return None
-    return results[0].get("setid")
+    return data["data"][0]
 
 
 def fetch_leaflet_text(set_id: str) -> str:
-    """Download the SPL XML for set_id and extract plain text from section narratives."""
-    url = f"{DAILYMED_BASE}/spls/{set_id}.xml"
-    response = requests.get(url, timeout=30)
-    response.raise_for_status()
-
-    root = ET.fromstring(response.content)
-    ns = {"v3": SPL_NS}
-
-    text_parts: list[str] = []
-    for section in root.findall(".//v3:section", ns):
-        title_el = section.find("v3:title", ns)
-        title = title_el.text.strip() if title_el is not None and title_el.text else ""
-
-        paragraphs: list[str] = []
-        for text_el in section.findall(".//v3:text", ns):
-            raw = "".join(text_el.itertext()).strip()
-            if raw:
-                paragraphs.append(raw)
-
-        if title or paragraphs:
-            block = f"### {title}\n" + "\n".join(paragraphs) if title else "\n".join(paragraphs)
-            text_parts.append(block)
-
-    return "\n\n".join(text_parts)
+    """Fetch leaflet text from DailyMed XML format."""
+    url = f"https://dailymed.nlm.nih.gov/dailymed/services/v2/spls/{set_id}.xml"
+    response = requests.get(url)
+    text = re.sub(r'<[^>]+>', ' ', response.text)
+    text = re.sub(r'\s+', ' ', text).strip()
+    return text[:12000]
 
 
 def get_drug_leaflet(drug_name: str) -> str:
-    """Convenience wrapper: search for drug_name and return its leaflet text."""
-    set_id = search_drug(drug_name)
-    if set_id is None:
-        raise ValueError(f"No DailyMed entry found for '{drug_name}'")
-    return fetch_leaflet_text(set_id)
+    """Main function: drug name -> full leaflet text."""
+    print(f"Searching DailyMed for: {drug_name}...")
+    result = search_drug(drug_name)
+    if not result:
+        print(f"'{drug_name}' not found.")
+        return None
+    print(f"Found: {result.get('title')}")
+    leaflet_text = fetch_leaflet_text(result.get("setid"))
+    print(f"Retrieved {len(leaflet_text)} characters.")
+    return leaflet_text

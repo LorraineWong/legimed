@@ -1,166 +1,133 @@
-from __future__ import annotations
-
-import textwrap
-
 import gradio as gr
-
 from dailymed import get_drug_leaflet
-from extract import extract_drug_info_robust
 from personalise import personalise
-from schema import DrugInfo, Severity, UserProfile
-
-_SEVERITY_EMOJI = {
-    Severity.low: "🟢",
-    Severity.moderate: "🟡",
-    Severity.high: "🟠",
-    Severity.critical: "🔴",
-}
-
-_MODEL = None
-_TOKENIZER = None
+from schema import UserProfile
 
 
-def _load_model():
-    global _MODEL, _TOKENIZER
-    if _MODEL is None:
-        from transformers import AutoModelForCausalLM, AutoTokenizer
-
-        model_id = "google/gemma-3-1b-it"
-        _TOKENIZER = AutoTokenizer.from_pretrained(model_id)
-        _MODEL = AutoModelForCausalLM.from_pretrained(model_id, device_map="auto")
-    return _MODEL, _TOKENIZER
-
-
-def _format_drug_info(info: DrugInfo) -> str:
-    lines: list[str] = []
-
-    lines.append(f"# {info.drug_name}")
-    if info.generic_name:
-        lines.append(f"**Generic name:** {info.generic_name}")
-    if info.drug_class:
-        lines.append(f"**Drug class:** {info.drug_class}")
-
-    if info.indications:
-        lines.append("\n## Indications")
-        for ind in info.indications:
-            lines.append(f"- {ind}")
-
-    if info.dosage_instructions:
-        lines.append("\n## Dosage")
-        for di in info.dosage_instructions:
-            parts = [p for p in [di.route, di.dose, di.frequency] if p]
-            lines.append(f"- {' | '.join(parts)}")
-            if di.notes:
-                lines.append(f"  _{di.notes}_")
-
-    if info.warnings:
-        lines.append("\n## Warnings")
-        for w in info.warnings:
-            badge = _SEVERITY_EMOJI.get(w.severity, "")
-            lines.append(f"- {badge} **[{w.severity.value.upper()}]** {w.text}")
-
-    if info.side_effects:
-        lines.append("\n## Side Effects")
-        for se in info.side_effects:
-            badge = _SEVERITY_EMOJI.get(se.severity, "")
-            freq = f" ({se.frequency})" if se.frequency else ""
-            lines.append(f"- {badge} {se.effect}{freq}")
-
-    if info.food_interactions:
-        lines.append("\n## Food Interactions")
-        for fi in info.food_interactions:
-            reason = f" — {fi.reason}" if fi.reason else ""
-            lines.append(f"- **{fi.action.value.replace('_', ' ').title()}** {fi.food_item}{reason}")
-
-    if info.contraindications:
-        lines.append("\n## Contraindications")
-        for ci in info.contraindications:
-            lines.append(f"- {ci}")
-
-    if info.storage:
-        lines.append(f"\n## Storage\n{info.storage}")
-
-    return "\n".join(lines)
-
-
-def run_pipeline(
-    drug_name: str,
-    age_group: str,
-    pregnant: bool,
-    kidney_impairment: bool,
-    liver_impairment: bool,
-    other_medications: str,
-) -> str:
-    if not drug_name.strip():
-        return "Please enter a drug name."
-
-    other_meds = [m.strip() for m in other_medications.split(",") if m.strip()]
-    profile = UserProfile(
-        age_group=age_group,
-        pregnant=pregnant,
-        kidney_impairment=kidney_impairment,
-        liver_impairment=liver_impairment,
-        other_medications=other_meds,
-    )
+def run_legimed(drug_name, age_group, pregnant, kidney_issue,
+                liver_issue, other_meds, model, tokenizer):
+    """Main pipeline function called by Gradio."""
+    from extract import extract_drug_info_robust
 
     try:
         leaflet_text = get_drug_leaflet(drug_name.strip())
-    except Exception as exc:
-        return f"Could not retrieve leaflet: {exc}"
+        if not leaflet_text:
+            return "Drug not found in DailyMed. Please check the spelling."
 
-    try:
-        model, tokenizer = _load_model()
         drug_info = extract_drug_info_robust(leaflet_text, model, tokenizer)
-    except Exception as exc:
-        return f"Extraction failed: {exc}"
 
-    personalised = personalise(drug_info, profile)
-    return _format_drug_info(personalised)
-
-
-def build_ui() -> gr.Blocks:
-    with gr.Blocks(title="Legimed — Medication Guide") as demo:
-        gr.Markdown(
-            textwrap.dedent("""\
-            # Legimed
-            **Personalised medication information powered by DailyMed + Gemma 3**
-
-            Enter a drug name and your profile to receive a tailored summary of
-            warnings, side effects, and food interactions.
-            """)
+        other_meds_list = [m.strip() for m in other_meds.split(",") if m.strip()]
+        profile = UserProfile(
+            age_group=age_group,
+            pregnant=pregnant,
+            kidney_issue=kidney_issue,
+            liver_issue=liver_issue,
+            other_medications=other_meds_list
         )
+
+        drug_info = personalise(drug_info, profile)
+
+        output = f"# {drug_info.drug_name}\n"
+        output += f"**Drug class:** {drug_info.drug_class}  \n"
+        output += f"**Active ingredient:** {drug_info.active_ingredient}\n\n"
+        output += "---\n\n## When to take\n"
+        for d in drug_info.dosage_instructions:
+            food = "with food" if d.with_food else "without food"
+            output += f"- **{d.time_of_day.capitalize()}**: {d.amount} — {food}\n"
+            if d.notes:
+                output += f"  _{d.notes}_\n"
+
+        output += "\n---\n\n## Side effects\n"
+        severity_label = {
+            "HIGH": "🔴 Seek emergency help",
+            "MEDIUM": "🟡 Call your doctor",
+            "LOW": "🟢 Monitor"
+        }
+        for se in drug_info.side_effects:
+            label = severity_label.get(se.severity, "🟢 Monitor")
+            output += f"- {label} — **{se.name}**: {se.description}\n"
+
+        output += "\n---\n\n## Food & drink\n"
+        action_label = {
+            "avoid": "🚫 Avoid",
+            "caution": "⚠️ Caution",
+            "ok": "✅ OK"
+        }
+        for fi in drug_info.food_interactions:
+            label = action_label.get(fi.action, "⚠️ Caution")
+            output += f"- {label} — **{fi.substance}**: {fi.reason}\n"
+
+        if drug_info.warnings:
+            output += "\n---\n\n## Warnings\n"
+            for w in drug_info.warnings:
+                output += f"- ⚠️ {w.text}\n"
+
+        if drug_info.emergency_signs:
+            output += "\n---\n\n## 🚨 Emergency — seek help immediately if:\n"
+            for e in drug_info.emergency_signs:
+                output += f"- {e}\n"
+
+        if drug_info.contraindications:
+            output += "\n---\n\n## Do not take if you have:\n"
+            for c in drug_info.contraindications:
+                output += f"- {c}\n"
+
+        output += "\n---\n_Generated by Legimed · Powered by Gemma 4 · For reference only._"
+        return output
+
+    except Exception as e:
+        return f"Something went wrong: {str(e)}\n\nPlease try again."
+
+
+def build_demo(model, tokenizer):
+    """Build and return Gradio demo with model injected."""
+
+    def _run(drug_name, age_group, pregnant, kidney_issue, liver_issue, other_meds):
+        return run_legimed(drug_name, age_group, pregnant, kidney_issue,
+                           liver_issue, other_meds, model, tokenizer)
+
+    with gr.Blocks(title="Legimed") as demo:
+        gr.Markdown("""
+        # Legimed — Your Medication, Made Legible
+        *Turn any medication name into a personalized guide · Powered by Gemma 4 · Offline · Free*
+        """)
 
         with gr.Row():
             with gr.Column(scale=1):
+                gr.Markdown("### Drug")
                 drug_input = gr.Textbox(
                     label="Drug name",
-                    placeholder="e.g. metformin, ibuprofen, amoxicillin",
+                    placeholder="e.g. warfarin, metformin, amlodipine",
+                    value="warfarin"
                 )
-                age_radio = gr.Radio(
-                    choices=["child", "adult", "elderly"],
+                gr.Markdown("### Your profile")
+                age_group = gr.Radio(
+                    choices=["adult", "elderly"],
                     value="adult",
-                    label="Age group",
+                    label="Age group"
                 )
-                pregnant_cb = gr.Checkbox(label="Pregnant or breastfeeding")
-                kidney_cb = gr.Checkbox(label="Kidney impairment")
-                liver_cb = gr.Checkbox(label="Liver impairment")
-                other_meds_input = gr.Textbox(
-                    label="Other medications (comma-separated)",
-                    placeholder="e.g. warfarin, lisinopril",
+                pregnant = gr.Checkbox(label="Pregnant or breastfeeding")
+                kidney_issue = gr.Checkbox(label="Kidney condition")
+                liver_issue = gr.Checkbox(label="Liver condition")
+                other_meds = gr.Textbox(
+                    label="Other medications (comma separated)",
+                    placeholder="e.g. metformin, atorvastatin"
                 )
-                submit_btn = gr.Button("Generate guide", variant="primary")
+                submit_btn = gr.Button("Generate my guide", variant="primary")
 
             with gr.Column(scale=2):
-                output_md = gr.Markdown(label="Medication guide")
+                gr.Markdown("### Your personalized guide")
+                output = gr.Markdown(
+                    value="_Enter a drug name and your profile, then click Generate._"
+                )
 
         submit_btn.click(
-            fn=run_pipeline,
-            inputs=[drug_input, age_radio, pregnant_cb, kidney_cb, liver_cb, other_meds_input],
-            outputs=output_md,
+            fn=_run,
+            inputs=[drug_input, age_group, pregnant,
+                    kidney_issue, liver_issue, other_meds],
+            outputs=output
         )
 
+        gr.Markdown("_Legimed · Gemma 4 Good Hackathon 2026 · Apache 2.0 · [GitHub](https://github.com/LorraineWong/legimed)_")
+
     return demo
-
-
-if __name__ == "__main__":
-    build_ui().launch()

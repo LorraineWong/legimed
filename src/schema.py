@@ -1,67 +1,61 @@
-from __future__ import annotations
-
-from enum import Enum
-from typing import List, Optional
-
 from pydantic import BaseModel, Field
+from typing import List, Optional
+from enum import Enum
 
 
 class Severity(str, Enum):
-    low = "low"
-    moderate = "moderate"
-    high = "high"
-    critical = "critical"
+    HIGH = "HIGH"
+    MEDIUM = "MEDIUM"
+    LOW = "LOW"
 
 
 class FoodAction(str, Enum):
-    avoid = "avoid"
-    limit = "limit"
-    take_with = "take_with"
-    take_without = "take_without"
-    monitor = "monitor"
+    AVOID = "avoid"
+    CAUTION = "caution"
+    OK = "ok"
 
 
 class DosageInstruction(BaseModel):
-    route: Optional[str] = None
-    frequency: Optional[str] = None
-    dose: Optional[str] = None
-    notes: Optional[str] = None
+    time_of_day: str = Field(description="morning / afternoon / evening / bedtime")
+    amount: str = Field(description="e.g. 3mg, 1 tablet")
+    with_food: bool = Field(description="True if must be taken with food")
+    notes: Optional[str] = Field(default=None)
 
 
 class SideEffect(BaseModel):
-    effect: str
+    name: str
     severity: Severity
-    frequency: Optional[str] = None
+    description: str
 
 
 class FoodInteraction(BaseModel):
-    food_item: str
+    substance: str
     action: FoodAction
-    reason: Optional[str] = None
+    reason: str
 
 
 class Warning(BaseModel):
     text: str
-    severity: Severity
-    relevant_conditions: List[str] = Field(default_factory=list)
+    applies_to: List[str]
 
 
 class DrugInfo(BaseModel):
     drug_name: str
-    generic_name: Optional[str] = None
-    drug_class: Optional[str] = None
-    indications: List[str] = Field(default_factory=list)
-    dosage_instructions: List[DosageInstruction] = Field(default_factory=list)
-    side_effects: List[SideEffect] = Field(default_factory=list)
-    food_interactions: List[FoodInteraction] = Field(default_factory=list)
-    warnings: List[Warning] = Field(default_factory=list)
-    contraindications: List[str] = Field(default_factory=list)
-    storage: Optional[str] = None
+    active_ingredient: str
+    drug_class: str
+    dosage_instructions: List[DosageInstruction]
+    side_effects: List[SideEffect]
+    food_interactions: List[FoodInteraction]
+    warnings: List[Warning]
+    contraindications: List[str]
+    emergency_signs: List[str]
 
 
 class UserProfile(BaseModel):
-    age_group: str  # "child", "adult", "elderly"
+    age_group: str = Field(description="child / adult / elderly")
     pregnant: bool = False
-    kidney_impairment: bool = False
-    liver_impairment: bool = False
+    breastfeeding: bool = False
+    liver_issue: bool = False
+    kidney_issue: bool = False
     other_medications: List[str] = Field(default_factory=list)
+    allergies: List[str] = Field(default_factory=list)
