@@ -94,8 +94,8 @@ legimed/
 │   ├── personalise.py     # Personalisation rule engine
 │   └── app.py             # Gradio UI
 ├── notebooks/
-│   ├── legimed_pipeline.ipynb   # Production entry point
-│   └── legimed_dev.ipynb        # Development notebook
+│   ├── legimed_pipeline  # Production entry point (see Demo section)
+│   └── legimed_dev       # Development notebook (see Demo section)
 └── requirements.txt
 ```
 
