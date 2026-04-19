@@ -4,7 +4,7 @@ import json
 import re
 from typing import Any
 
-from .schema import (
+from schema import (
     DrugInfo,
     DosageInstruction,
     FoodAction,

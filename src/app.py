@@ -4,10 +4,10 @@ import textwrap
 
 import gradio as gr
 
-from .dailymed import get_drug_leaflet
-from .extract import extract_drug_info_robust
-from .personalise import personalise
-from .schema import DrugInfo, Severity, UserProfile
+from dailymed import get_drug_leaflet
+from extract import extract_drug_info_robust
+from personalise import personalise
+from schema import DrugInfo, Severity, UserProfile
 
 _SEVERITY_EMOJI = {
     Severity.low: "🟢",

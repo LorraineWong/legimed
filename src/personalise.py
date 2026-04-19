@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import copy
 
-from .schema import DrugInfo, Severity, UserProfile, Warning
+from schema import DrugInfo, Severity, UserProfile, Warning
 
 # Conditions that boost warning severity by one level
 _CONDITION_RELEVANCE: dict[str, list[str]] = {
