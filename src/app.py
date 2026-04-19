@@ -4,16 +4,148 @@ from personalise import personalise, generate_personal_summary
 from schema import UserProfile
 
 
+def format_html_output(drug_info, personal_summary) -> str:
+    """Format DrugInfo as a clean card-based HTML output."""
+
+    severity_color = {"HIGH": "#FEE2E2", "MEDIUM": "#FEF3C7", "LOW": "#D1FAE5"}
+    severity_text = {"HIGH": "#991B1B", "MEDIUM": "#92400E", "LOW": "#065F46"}
+    severity_tag = {"HIGH": "Emergency", "MEDIUM": "Call doctor", "LOW": "Monitor"}
+    severity_dot = {"HIGH": "#E24B4A", "MEDIUM": "#EF9F27", "LOW": "#1D9E75"}
+    food_color = {"avoid": "#FEE2E2", "caution": "#FEF3C7", "ok": "#D1FAE5"}
+    food_text = {"avoid": "#991B1B", "caution": "#92400E", "ok": "#065F46"}
+    food_icon = {"avoid": "🚫", "caution": "⚠️", "ok": "✅"}
+
+    # Header
+    html = f"""
+    <div style="font-family:system-ui,-apple-system,sans-serif;background:#F0F4F8;padding:16px;border-radius:16px;">
+
+      <div style="background:#fff;border-radius:12px;border:0.5px solid #E2EAF4;padding:14px 16px;margin-bottom:10px;display:flex;align-items:flex-start;justify-content:space-between;">
+        <div>
+          <div style="font-size:18px;font-weight:600;color:#0D1B2A;">{drug_info.drug_name}</div>
+          <div style="font-size:11px;color:#9BA8B5;margin-top:2px;">Active ingredient: {drug_info.active_ingredient}</div>
+        </div>
+        <div style="font-size:11px;padding:4px 10px;border-radius:6px;background:#E1F5EE;color:#085041;font-weight:500;">{drug_info.drug_class}</div>
+      </div>
+    """
+
+    # Personal summary
+    if personal_summary:
+        html += f"""
+      <div style="background:#fff;border-radius:12px;border:0.5px solid #E2EAF4;padding:14px 16px;margin-bottom:10px;">
+        <div style="font-size:9px;font-weight:700;color:#1D9E75;text-transform:uppercase;letter-spacing:0.09em;margin-bottom:8px;">Your personal summary</div>
+        <div style="font-size:13px;color:#0D1B2A;line-height:1.6;padding:10px 12px;background:#F0FDF4;border-radius:8px;border-left:3px solid #1D9E75;">{personal_summary}</div>
+      </div>
+        """
+
+    # When to take
+    time_slots = {"morning": "🌅", "afternoon": "☀️", "evening": "🌆", "bedtime": "🌙"}
+    dose_map = {}
+    notes_map = {}
+    food_map = {}
+    for d in drug_info.dosage_instructions:
+        dose_map[d.time_of_day] = d.amount
+        notes_map[d.time_of_day] = d.notes or ""
+        food_map[d.time_of_day] = "with food" if d.with_food else "without food"
+
+    html += """
+      <div style="background:#fff;border-radius:12px;border:0.5px solid #E2EAF4;padding:14px 16px;margin-bottom:10px;">
+        <div style="font-size:9px;font-weight:700;color:#1D9E75;text-transform:uppercase;letter-spacing:0.09em;margin-bottom:10px;">When to take</div>
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;">
+    """
+    for slot, icon in time_slots.items():
+        dose = dose_map.get(slot)
+        active = dose is not None
+        bg = "#E1F5EE" if active else "#F4F7FB"
+        border = "border:1px solid #9FE1CB;" if active else ""
+        dose_text = f'<div style="font-size:11px;font-weight:600;color:#085041;margin-top:2px;">{dose}</div>' if active else '<div style="font-size:11px;color:#D1D9E0;margin-top:2px;">—</div>'
+        note = f'<div style="font-size:9px;color:#6B7B8D;margin-top:1px;">{food_map.get(slot,"")}</div>' if active else ""
+        html += f"""
+          <div style="border-radius:8px;padding:8px 4px;text-align:center;background:{bg};{border}">
+            <div style="font-size:14px;">{icon}</div>
+            <div style="font-size:9px;color:#9BA8B5;margin-top:2px;">{slot.capitalize()}</div>
+            {dose_text}
+            {note}
+          </div>
+        """
+    html += "</div></div>"
+
+    # Side effects
+    if drug_info.side_effects:
+        html += """
+      <div style="background:#fff;border-radius:12px;border:0.5px solid #E2EAF4;padding:14px 16px;margin-bottom:10px;">
+        <div style="font-size:9px;font-weight:700;color:#1D9E75;text-transform:uppercase;letter-spacing:0.09em;margin-bottom:8px;">Side effects</div>
+        """
+        for se in drug_info.side_effects:
+            bg = severity_color.get(se.severity, "#F4F7FB")
+            tc = severity_text.get(se.severity, "#0D1B2A")
+            dot = severity_dot.get(se.severity, "#888")
+            tag = severity_tag.get(se.severity, "Monitor")
+            html += f"""
+        <div style="display:flex;align-items:center;gap:8px;padding:7px 8px;border-radius:7px;background:{bg};margin-bottom:4px;">
+          <div style="width:7px;height:7px;border-radius:50%;background:{dot};flex-shrink:0;"></div>
+          <span style="font-size:12px;color:{tc};flex:1;"><strong>{se.name}</strong>: {se.description}</span>
+          <span style="font-size:9px;padding:2px 6px;border-radius:4px;background:rgba(255,255,255,0.6);color:{tc};font-weight:600;">{tag}</span>
+        </div>
+            """
+        html += "</div>"
+
+    # Food & drink
+    if drug_info.food_interactions:
+        html += """
+      <div style="background:#fff;border-radius:12px;border:0.5px solid #E2EAF4;padding:14px 16px;margin-bottom:10px;">
+        <div style="font-size:9px;font-weight:700;color:#1D9E75;text-transform:uppercase;letter-spacing:0.09em;margin-bottom:8px;">Food &amp; drink</div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;">
+        """
+        for fi in drug_info.food_interactions:
+            bg = food_color.get(fi.action, "#F4F7FB")
+            tc = food_text.get(fi.action, "#0D1B2A")
+            icon = food_icon.get(fi.action, "")
+            html += f'<div style="display:flex;align-items:center;gap:4px;padding:5px 9px;border-radius:7px;background:{bg};font-size:11px;font-weight:500;color:{tc};" title="{fi.reason}">{icon} {fi.substance}</div>'
+        html += "</div></div>"
+
+    # Personalised warnings
+    if drug_info.warnings:
+        html += """
+      <div style="background:#FFFBEB;border:0.5px solid #FCD34D;border-radius:12px;padding:14px 16px;margin-bottom:10px;">
+        <div style="font-size:9px;font-weight:700;color:#92400E;text-transform:uppercase;letter-spacing:0.09em;margin-bottom:8px;">⚠ Warnings</div>
+        """
+        for w in drug_info.warnings:
+            html += f'<div style="font-size:12px;color:#78350F;padding:3px 0;">· {w.text}</div>'
+        html += "</div>"
+
+    # Emergency
+    if drug_info.emergency_signs:
+        html += """
+      <div style="background:#FEF2F2;border:1px solid #FCA5A5;border-radius:12px;padding:14px 16px;margin-bottom:10px;">
+        <div style="font-size:9px;font-weight:700;color:#991B1B;text-transform:uppercase;letter-spacing:0.09em;margin-bottom:8px;">🚨 Emergency — seek help immediately if:</div>
+        """
+        for e in drug_info.emergency_signs:
+            html += f'<div style="font-size:12px;color:#7F1D1D;padding:2px 0;">· {e}</div>'
+        html += "</div>"
+
+    # Footer
+    html += """
+      <div style="padding-top:10px;border-top:0.5px solid #E2EAF4;display:flex;justify-content:space-between;align-items:center;">
+        <span style="font-size:10px;color:#9BA8B5;">Powered by Gemma 4 · Verified against NIH DailyMed · For reference only</span>
+        <span style="font-size:10px;color:#9BA8B5;">Always consult your doctor or pharmacist</span>
+      </div>
+    </div>
+    """
+    return html
+
+
 def run_legimed(drug_name, age_group, pregnant, kidney_issue,
                 liver_issue, other_meds, model, tokenizer):
     """Main pipeline function called by Gradio."""
+    from extract import extract_drug_info_robust
+
     try:
         if not drug_name.strip():
-            return "Please enter a drug name first."
+            return "<p style='color:#991B1B;padding:1rem;'>Please enter a drug name first.</p>"
 
         leaflet_text = get_drug_leaflet(drug_name.strip())
         if not leaflet_text:
-            return f"'{drug_name}' not found in DailyMed. Please check the spelling."
+            return f"<p style='color:#991B1B;padding:1rem;'>'{drug_name}' not found in DailyMed. Please check the spelling.</p>"
 
         other_meds_list = [m.strip() for m in other_meds.split(",") if m.strip()]
         profile = UserProfile(
@@ -24,68 +156,14 @@ def run_legimed(drug_name, age_group, pregnant, kidney_issue,
             other_medications=other_meds_list
         )
 
-        from extract import extract_drug_info_robust
         drug_info = extract_drug_info_robust(leaflet_text, model, tokenizer)
         drug_info = personalise(drug_info, profile)
         personal_summary = generate_personal_summary(drug_info, profile)
 
-        output = f"# {drug_info.drug_name}\n"
-        output += f"**Drug class:** {drug_info.drug_class}  \n"
-        output += f"**Active ingredient:** {drug_info.active_ingredient}\n\n"
-        output += "---\n\n"
-
-        if personal_summary:
-            output += "## Your personal summary\n"
-            output += f"> {personal_summary}\n\n"
-            output += "---\n\n"
-
-        output += "## When to take\n"
-        for d in drug_info.dosage_instructions:
-            food = "with food" if d.with_food else "without food"
-            output += f"- **{d.time_of_day.capitalize()}**: {d.amount} — {food}\n"
-            if d.notes:
-                output += f"  _{d.notes}_\n"
-
-        output += "\n---\n\n## Side effects\n"
-        severity_label = {
-            "HIGH": "🔴 Seek emergency help",
-            "MEDIUM": "🟡 Call your doctor",
-            "LOW": "🟢 Monitor"
-        }
-        for se in drug_info.side_effects:
-            label = severity_label.get(se.severity, "🟢 Monitor")
-            output += f"- {label} — **{se.name}**: {se.description}\n"
-
-        output += "\n---\n\n## Food & drink\n"
-        action_label = {
-            "avoid": "🚫 Avoid",
-            "caution": "⚠️ Caution",
-            "ok": "✅ OK"
-        }
-        for fi in drug_info.food_interactions:
-            label = action_label.get(fi.action, "⚠️ Caution")
-            output += f"- {label} — **{fi.substance}**: {fi.reason}\n"
-
-        if drug_info.warnings:
-            output += "\n---\n\n## Warnings\n"
-            for w in drug_info.warnings:
-                output += f"- ⚠️ {w.text}\n"
-
-        if drug_info.emergency_signs:
-            output += "\n---\n\n## 🚨 Emergency — seek help immediately if:\n"
-            for e in drug_info.emergency_signs:
-                output += f"- {e}\n"
-
-        if drug_info.contraindications:
-            output += "\n---\n\n## Do not take if you have:\n"
-            for c in drug_info.contraindications:
-                output += f"- {c}\n"
-
-        output += "\n---\n_Generated by Legimed · Powered by Gemma 4 · For reference only · Always consult your doctor._"
-        return output
+        return format_html_output(drug_info, personal_summary)
 
     except Exception as e:
-        return f"Something went wrong: {str(e)}\n\nPlease try again."
+        return f"<p style='color:#991B1B;padding:1rem;'>Something went wrong: {str(e)}</p>"
 
 
 def build_demo(model, tokenizer):
@@ -109,7 +187,6 @@ def build_demo(model, tokenizer):
                     placeholder="e.g. warfarin, metformin, amlodipine",
                     value="warfarin"
                 )
-
                 gr.Markdown("### Your profile")
                 age_group = gr.Radio(
                     choices=["adult", "elderly"],
@@ -131,12 +208,12 @@ def build_demo(model, tokenizer):
 
             with gr.Column(scale=2):
                 gr.Markdown("### Your personalized guide")
-                output = gr.Markdown(
-                    value="_Enter a drug name and fill in your profile, then click **Generate my guide**._"
+                output = gr.HTML(
+                    value="<p style='color:#9BA8B5;padding:1rem;'>Enter a drug name and fill in your profile, then click <strong>Generate my guide</strong>.</p>"
                 )
 
         submit_btn.click(
-            fn=lambda: "⏳ Generating your personalized guide... This takes about 45 seconds. Please wait.",
+            fn=lambda: "<p style='color:#1D9E75;padding:1rem;'>⏳ Generating your personalized guide... This takes about 45 seconds. Please wait.</p>",
             inputs=None,
             outputs=output,
             queue=False
