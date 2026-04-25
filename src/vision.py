@@ -36,21 +36,25 @@ def preprocess_image(pil_image: Image.Image) -> Image.Image:
 def extract_drug_name_gemma(pil_image: Image.Image, model, tokenizer, processor) -> str:
     """
     Use Gemma 4 vision to extract drug name from medication box photo.
-    Requires a preloaded multimodal processor to avoid runtime OOM in Colab.
+    Uses apply_chat_template for correct multimodal input formatting.
     Returns drug name string, or empty string if not found.
     """
     import torch
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "image"},
+                {"type": "text", "text": "What is the drug name or medicine name shown on this box? Reply with ONLY the drug name (e.g. Panadol, Warfarin, Metformin). Do not include dosage, brand taglines, or manufacturer. If you cannot read a drug name, reply UNKNOWN."}
+            ]
+        }
+    ]
 
-    prompt = """Look at this medication box or label photo.
-What is the drug name or medicine name shown on this box?
-Reply with ONLY the drug name (e.g. "Panadol", "Warfarin", "Metformin").
-Do not include dosage, brand taglines, or manufacturer.
-If you cannot read a drug name, reply UNKNOWN."""
-
+    text = processor.apply_chat_template(messages, add_generation_prompt=True)
     inputs = processor(
-        text=prompt,
+        text=text,
         images=preprocess_image(pil_image),
-        return_tensors="pt",
+        return_tensors="pt"
     ).to(model.device)
 
     with torch.no_grad():
@@ -73,6 +77,7 @@ If you cannot read a drug name, reply UNKNOWN."""
         return ""
 
     return drug_name
+
 
 
 def extract_text_tesseract(pil_image: Image.Image) -> str:
