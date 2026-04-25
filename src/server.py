@@ -274,7 +274,7 @@ async def generate(req: GenerateRequest):
             other_medications=_csv(req.other_medications),
         )
 
-        drug_info = extract_drug_info_robust(leaflet, _model, _tokenizer)
+        drug_info = extract_drug_info_robust(leaflet, _model, _processor)
         drug_info = personalise(drug_info, profile)
         summary = generate_personal_summary(drug_info, profile)
         guide_html = format_guide(drug_info, summary)
@@ -289,11 +289,11 @@ async def generate(req: GenerateRequest):
 
 # ── Launch ─────────────────────────────────────────────────────────────────────
 
-def launch(model, tokenizer, processor=None, port=7860):
+def launch(model, processor, port=7860):
     import asyncio
     global _model, _tokenizer, _processor
     _model = model
-    _tokenizer = tokenizer
+    _tokenizer = processor   # Gemma 4 tokenizer == processor
     _processor = processor
 
     config = uvicorn.Config(app, host="0.0.0.0", port=port, log_level="warning")
