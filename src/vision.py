@@ -36,8 +36,8 @@ def preprocess_image(pil_image: Image.Image) -> Image.Image:
 def extract_drug_name_gemma(pil_image: Image.Image, model, tokenizer, processor) -> str:
     """
     Use Gemma 4 vision to extract drug name from medication box photo.
-    Uses apply_chat_template with images= for correct Gemma 4 multimodal formatting.
-    Returns drug name string, or empty string if not found.
+    Step 1: apply_chat_template with tokenize=False to get text string.
+    Step 2: processor() combines text + image together.
     """
     import torch
 
@@ -51,14 +51,18 @@ def extract_drug_name_gemma(pil_image: Image.Image, model, tokenizer, processor)
         }
     ]
 
-    # Gemma 4: pass images= directly into apply_chat_template
-    inputs = processor.apply_chat_template(
+    # Step 1: get formatted text string only
+    text = processor.apply_chat_template(
         messages,
         add_generation_prompt=True,
-        tokenize=True,
-        return_dict=True,
-        return_tensors="pt",
-        images=[preprocess_image(pil_image)]
+        tokenize=False
+    )
+
+    # Step 2: processor handles text + image together
+    inputs = processor(
+        text=text,
+        images=[preprocess_image(pil_image)],
+        return_tensors="pt"
     ).to(model.device, dtype=torch.bfloat16)
 
     input_len = inputs["input_ids"].shape[-1]
@@ -71,7 +75,6 @@ def extract_drug_name_gemma(pil_image: Image.Image, model, tokenizer, processor)
             do_sample=False,
         )
 
-    # Use processor.decode (not tokenizer.decode) — same object in Gemma 4
     response = processor.decode(
         outputs[0][input_len:],
         skip_special_tokens=True,
