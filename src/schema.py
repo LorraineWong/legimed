@@ -53,9 +53,15 @@ class DrugInfo(BaseModel):
 
 class UserProfile(BaseModel):
     age_group: str = Field(description="child / adult / elderly")
+    sex: str = Field(default="prefer_not_to_say", description="male / female / prefer_not_to_say")
     pregnant: bool = False
     breastfeeding: bool = False
     liver_issue: bool = False
     kidney_issue: bool = False
+    heart_condition: bool = False
+    diabetes: bool = False
+    hypertension: bool = False
+    asthma: bool = False
+    other_conditions: str = Field(default="", description="free text for other conditions")
     other_medications: List[str] = Field(default_factory=list)
     allergies: List[str] = Field(default_factory=list)

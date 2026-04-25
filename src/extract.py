@@ -63,7 +63,7 @@ STRICT OUTPUT RULES:
 - amount MUST be a clean dosage string like "5 mg", "1 tablet", "2-10 mg". No garbled text.
 - warning text MUST be a complete readable sentence in plain English. Never ALL CAPS only.
 - Extract AT LEAST 3 side_effects if mentioned anywhere in the leaflet.
-- Extract AT LEAST 3 food_interactions if mentioned anywhere in the leaflet.
+- Extract AT LEAST 3 food_interactions if mentioned anywhere in the leaflet. food_interactions must only include actual foods, drinks, beverages, or dietary supplements (e.g. alcohol, grapefruit, milk, vitamin K, caffeine). Do NOT include other medications or drugs as food_interactions — drug interactions belong in warnings only.
 - Extract AT LEAST 3 warnings if mentioned anywhere in the leaflet.
 
 JSON SCHEMA:
