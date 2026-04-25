@@ -270,6 +270,7 @@ def build_demo(model, tokenizer, processor=None):
         title="Legimed",
         theme=gr.themes.Soft(),
         css="""
+        :root { color-scheme: light only !important; }
         body, .gradio-container, .main {
             background: #F7F8FA !important;
             color: #1A202C !important;
