@@ -9,13 +9,22 @@ import re
 from PIL import Image
 
 
-def _tesseract_available() -> bool:
+def tesseract_status() -> tuple[bool, str]:
+    """
+    Check Tesseract availability and return (ok, message).
+    Call this at Gradio launch time to surface problems early.
+    """
     try:
         import pytesseract
-        pytesseract.get_tesseract_version()
-        return True
-    except Exception:
-        return False
+        version = pytesseract.get_tesseract_version()
+        # Check which language packs are available
+        langs = pytesseract.get_languages(config='')
+        missing = [l for l in ["eng", "chi_sim"] if l not in langs]
+        if missing:
+            return False, f"Tesseract found (v{version}) but missing language packs: {missing}. Run install_tesseract_colab()."
+        return True, f"Tesseract OK (v{version}), langs: {langs}"
+    except Exception as e:
+        return False, f"Tesseract not available: {e}"
 
 
 def preprocess_image(pil_image: Image.Image) -> Image.Image:
@@ -32,21 +41,25 @@ def preprocess_image(pil_image: Image.Image) -> Image.Image:
 def extract_text_from_image(pil_image: Image.Image) -> str:
     """
     Extract all visible text from a medication photo using Tesseract OCR.
-    Returns raw text string for Gemma 4 to process downstream.
-    Raises RuntimeError if Tesseract is not installed.
+    Returns raw text string. Returns empty string (not raises) if Tesseract unavailable.
     """
-    if not _tesseract_available():
-        raise RuntimeError(
-            "Tesseract not installed. Run install_tesseract_colab() first."
-        )
+    ok, msg = tesseract_status()
+    if not ok:
+        # Return empty string — caller will handle gracefully
+        print(f"[vision] {msg}")
+        return ""
 
     import pytesseract
     img = preprocess_image(pil_image)
 
     try:
-        text = pytesseract.image_to_string(img, lang="eng+chi_sim+msa")
-    except pytesseract.TesseractError:
-        text = pytesseract.image_to_string(img, lang="eng")
+        text = pytesseract.image_to_string(img, lang="eng+chi_sim")
+    except Exception:
+        try:
+            text = pytesseract.image_to_string(img, lang="eng")
+        except Exception as e:
+            print(f"[vision] OCR failed: {e}")
+            return ""
 
     return text.strip()
 

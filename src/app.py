@@ -210,11 +210,18 @@ def run_legimed_from_image(pil_image, age_group, pregnant, kidney_issue,
         return (drug_name, format_html_output(drug_info, personal_summary))
 
     except Exception as e:
-        return ("", f"<p style='color:#991B1B;padding:1rem;'>Error: {str(e)}</p>")
+        return ("", f"<p style='color:#991B1B;padding:1rem;'>Error: {str(e)}<br><br>If this is a Tesseract error, run <code>install_tesseract_colab()</code> in a new Colab cell first.</p>")
 
 
 def build_demo(model, tokenizer):
     """Build Gradio demo. Two tabs: type drug name / scan photo."""
+    from vision import tesseract_status
+    tess_ok, tess_msg = tesseract_status()
+    tess_badge = (
+        f"<span style='color:#065F46;background:#D1FAE5;padding:3px 8px;border-radius:5px;font-size:11px;'>✅ {tess_msg}</span>"
+        if tess_ok else
+        f"<span style='color:#991B1B;background:#FEE2E2;padding:3px 8px;border-radius:5px;font-size:11px;'>⚠️ {tess_msg}</span>"
+    )
 
     def _run_text(drug_name, age_group, pregnant, kidney_issue, liver_issue, other_meds):
         return run_legimed(drug_name, age_group, pregnant, kidney_issue,
@@ -283,6 +290,7 @@ def build_demo(model, tokenizer):
                             sources=["upload", "webcam", "clipboard"],
                             height=260,
                         )
+                        gr.HTML(value=tess_badge)
                         gr.Markdown("**Tips:** good lighting · full front face of box · text clearly visible")
                         gr.Markdown("### Your profile")
                         age2 = gr.Radio(choices=["adult", "elderly"], value="adult", label="Age group")
