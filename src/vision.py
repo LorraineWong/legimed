@@ -40,7 +40,6 @@ def extract_drug_name_gemma(pil_image: Image.Image, model, tokenizer, processor)
     Returns drug name string, or empty string if not found.
     """
     import torch
-
     messages = [
         {
             "role": "user",
@@ -68,7 +67,7 @@ def extract_drug_name_gemma(pil_image: Image.Image, model, tokenizer, processor)
 
     response = tokenizer.decode(
         outputs[0][inputs["input_ids"].shape[-1]:],
-        skip_special_tokens=True
+        skip_special_tokens=True,
     ).strip()
 
     drug_name = response.strip().split("\n")[0].strip()
