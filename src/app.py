@@ -2,7 +2,7 @@ import gradio as gr
 from dailymed import get_drug_leaflet
 from personalise import personalise, generate_personal_summary
 from schema import UserProfile
-from vision import image_to_drug_name, tesseract_status
+from vision import image_to_drug_name
 
 
 def format_html_output(drug_info, personal_summary) -> str:
@@ -98,8 +98,8 @@ def format_html_output(drug_info, personal_summary) -> str:
     if drug_info.food_interactions:
         fi_html = '<div style="display:flex;gap:8px;flex-wrap:wrap;">'
         for fi in drug_info.food_interactions:
-            bg   = food_color.get(fi.action, "#F4F7FB")
-            tc   = food_text.get(fi.action, "#0D1B2A")
+            bg = food_color.get(fi.action, "#F4F7FB")
+            tc = food_text.get(fi.action, "#0D1B2A")
             icon = food_icon.get(fi.action, "")
             fi_html += f"""
             <div style="display:flex;align-items:center;gap:5px;padding:7px 11px;
@@ -108,6 +108,11 @@ def format_html_output(drug_info, personal_summary) -> str:
               {icon} {fi.substance}</div>"""
         fi_html += "</div>"
         html += section("🍽 Food & Drink", fi_html)
+    else:
+        html += section(
+            "🍽 Food & Drink",
+            "<div style='font-size:13px;color:#718096;'>No specific food interactions found</div>"
+        )
 
     if drug_info.warnings:
         w_html = ""
@@ -224,9 +229,14 @@ def build_demo(model, tokenizer, processor=None):
 
     with gr.Blocks(
         title="Legimed",
-        theme=gr.themes.Soft(),
+        theme=gr.themes.Base(),
         css="""
-        .gradio-container { max-width: 480px !important; margin: 0 auto !important; }
+        .gradio-container {
+            max-width: 500px !important;
+            margin: 0 auto !important;
+            background: #F7F8FA !important;
+            padding: 0 12px 40px !important;
+        }
         footer { display: none !important; }
         .legimed-step {
             display:flex; align-items:center; gap:10px; margin: 10px 0 8px; color:#1A202C;
@@ -276,7 +286,6 @@ def build_demo(model, tokenizer, processor=None):
                 height=200,
                 elem_classes=["scan-zone"]
             )
-            gr.HTML(value=tess_badge)
             scan_btn = gr.Button("🔍 Scan image", variant="secondary", size="sm")
             scan_status = gr.HTML(value="")
             gr.HTML("<div class='scan-or-type'>— or type below —</div>")
@@ -305,7 +314,16 @@ def build_demo(model, tokenizer, processor=None):
                   "Complete steps above to generate your guide.</div>"
         )
 
-        # Scan button: just identify drug name
+        gr.HTML("""
+        <div style="text-align:center;padding:20px 0 8px;">
+          <div style="font-size:11px;color:#A0AEC0;line-height:1.6;">
+            Powered by Gemma 4 · NIH DailyMed · Apache 2.0<br>
+            <a href="https://github.com/LorraineWong/legimed"
+               style="color:#00A878;text-decoration:none;">GitHub</a>
+          </div>
+        </div>""")
+
+        # ── Events ───────────────────────────────────────
         scan_btn.click(
             fn=lambda: (gr.update(interactive=False), ""),
             inputs=None,
@@ -322,25 +340,23 @@ def build_demo(model, tokenizer, processor=None):
             queue=False
         )
 
-        # Generate button: produce full guide
         generate_btn.click(
-            fn=lambda: "<div style='color:#1D9E75;font-size:13px;padding:1rem;text-align:center;'>"
-                       "⏳ Generating your guide… (~45 seconds)</div>",
+            fn=lambda: """
+            <div style='text-align:center;padding:40px 20px;color:#00A878;font-size:13px;
+                        background:white;border-radius:16px;'>
+              ⏳ Generating your personalised guide…<br>
+              <span style='font-size:12px;color:#718096;'>This takes about 45 seconds</span>
+            </div>""",
             inputs=None,
             outputs=output,
             queue=False
         ).then(
             fn=_generate,
-            inputs=[drug_input, age_input, preg_input, kid_input, liv_input, meds_input],
+            inputs=[drug_input, age_input, sex_input, preg_input, bf_input,
+                    kidney_input, liver_input, heart_input, db_input,
+                    bp_input, asthma_input, other_cond_input, meds_input],
             outputs=output
         )
 
-        gr.HTML("""
-        <div style="text-align:center;padding:16px 0 8px;">
-          <div style="font-size:10px;color:#9BA8B5;">
-            Gemma 4 · NIH DailyMed · Apache 2.0 ·
-            <a href="https://github.com/LorraineWong/legimed" style="color:#1D9E75;">GitHub</a>
-          </div>
-        </div>""")
-
     return demo
+
