@@ -46,10 +46,10 @@ def clean_amount(amount: str) -> str:
     return cleaned[:30]  # hard cap — no dosage string should be longer than this
 
 
-def extract_drug_info_robust(leaflet_text: str, model, tokenizer) -> DrugInfo:
+def extract_drug_info_robust(leaflet_text: str, model, processor) -> DrugInfo:
     """
     Extract DrugInfo from leaflet text using Gemma 4.
-    Prompt enforces minimum content requirements and clean formatting.
+    Uses apply_chat_template for correct Gemma 4 formatting.
     """
     schema = json.dumps(DrugInfo.model_json_schema(), indent=2)
 
@@ -74,20 +74,30 @@ LEAFLET TEXT:
 
 JSON OUTPUT:"""
 
-    inputs = tokenizer(
-        f"<start_of_turn>user\n{prompt}<end_of_turn>\n<start_of_turn>model\n",
+    messages = [
+        {"role": "user", "content": [{"type": "text", "text": prompt}]}
+    ]
+
+    inputs = processor.apply_chat_template(
+        messages,
+        add_generation_prompt=True,
+        tokenize=True,
+        return_dict=True,
         return_tensors="pt"
-    ).to(model.device)
+    ).to(model.device, dtype=torch.bfloat16)
 
-    outputs = model.generate(
-        **inputs,
-        max_new_tokens=1200,
-        temperature=0,
-        do_sample=False,
-    )
+    input_len = inputs["input_ids"].shape[-1]
 
-    response = tokenizer.decode(
-        outputs[0][inputs["input_ids"].shape[-1]:],
+    with torch.no_grad():
+        outputs = model.generate(
+            **inputs,
+            max_new_tokens=1200,
+            temperature=0,
+            do_sample=False,
+        )
+
+    response = processor.decode(
+        outputs[0][input_len:],
         skip_special_tokens=True
     )
 
