@@ -8,7 +8,6 @@ import gc
 import json
 from io import BytesIO
 
-import torch
 import uvicorn
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -299,3 +298,6 @@ def launch(model, processor, port=7860):
     config = uvicorn.Config(app, host="0.0.0.0", port=port, log_level="warning")
     server = uvicorn.Server(config)
     asyncio.get_event_loop().run_until_complete(server.serve())
+
+if __name__ == "__main__":
+    launch()
