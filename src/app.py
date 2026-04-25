@@ -211,15 +211,6 @@ def generate_guide(drug_name, age_group, pregnant,
 
 
 def build_demo(model, tokenizer, processor=None):
-    tess_ok, tess_msg = tesseract_status()
-    tess_badge = (
-        f"<span style='color:#065F46;background:#D1FAE5;padding:3px 9px;"
-        f"border-radius:5px;font-size:11px;'>✅ {tess_msg}</span>"
-        if tess_ok else
-        f"<span style='color:#991B1B;background:#FEE2E2;padding:3px 9px;"
-        f"border-radius:5px;font-size:11px;'>⚠️ {tess_msg}</span>"
-    )
-
     def _scan(pil_image):
         return scan_image(pil_image, model, tokenizer, processor)
 
