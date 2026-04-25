@@ -330,7 +330,6 @@ def build_demo(model, tokenizer, processor=None):
             outputs=[scan_btn],
             queue=False
         )
-
         generate_btn.click(
             fn=lambda: """
             <div style='text-align:center;padding:40px 20px;color:#00A878;font-size:13px;
@@ -343,9 +342,8 @@ def build_demo(model, tokenizer, processor=None):
             queue=False
         ).then(
             fn=_generate,
-            inputs=[drug_input, age_input, sex_input, preg_input, bf_input,
-                    kidney_input, liver_input, heart_input, db_input,
-                    bp_input, asthma_input, other_cond_input, meds_input],
+            inputs=[drug_input, age_input, preg_input,
+                    kid_input, liv_input, meds_input],
             outputs=output
         )
 
