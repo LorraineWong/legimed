@@ -139,6 +139,7 @@ def format_html_output(drug_info, personal_summary) -> str:
 
 
 def scan_image(pil_image, model, tokenizer, processor=None):
+
     """Step 1: scan image and return detected drug name only."""
     if pil_image is None:
         return "", "<div style='color:#991B1B;padding:1rem;'>No image provided.</div>"
@@ -199,7 +200,6 @@ def generate_guide(drug_name, age_group, pregnant,
 
 
 def build_demo(model, tokenizer, processor=None):
-
     tess_ok, tess_msg = tesseract_status()
     tess_badge = (
         f"<span style='color:#065F46;background:#D1FAE5;padding:3px 9px;"
