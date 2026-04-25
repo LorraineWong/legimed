@@ -118,12 +118,13 @@ pip install -r requirements.txt
 ### Run
 
 ```python
-from transformers import AutoTokenizer, AutoModelForCausalLM
+from transformers import AutoTokenizer, AutoModelForCausalLM, AutoProcessor
 import torch, sys
 
 sys.path.insert(0, 'src')
 
 tokenizer = AutoTokenizer.from_pretrained("google/gemma-3-4b-it")
+processor = AutoProcessor.from_pretrained("google/gemma-3-4b-it")
 model = AutoModelForCausalLM.from_pretrained(
     "google/gemma-3-4b-it",
     torch_dtype=torch.bfloat16,
@@ -131,7 +132,7 @@ model = AutoModelForCausalLM.from_pretrained(
 )
 
 from app import build_demo
-demo = build_demo(model, tokenizer)
+demo = build_demo(model, tokenizer, processor)
 demo.launch()
 ```
 
