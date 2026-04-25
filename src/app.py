@@ -1,4 +1,7 @@
 import gradio as gr
+import base64
+from io import BytesIO
+from PIL import Image
 from dailymed import get_drug_leaflet
 from personalise import personalise, generate_personal_summary
 from schema import UserProfile
@@ -176,10 +179,11 @@ def format_html_output(drug_info, personal_summary) -> str:
     return html
 
 
-def scan_image(pil_image, model, tokenizer, processor=None):
-    if pil_image is None:
-        return "", _status_html("error", "No image provided.")
+def process_image_b64(img_b64: str, model, tokenizer, processor):
+    """Decode base64 image and run Gemma vision."""
     try:
+        img_data = base64.b64decode(img_b64)
+        pil_image = Image.open(BytesIO(img_data)).convert("RGB")
         drug_name, method = image_to_drug_name(pil_image, model, tokenizer, processor)
         if drug_name:
             return drug_name, _status_html(
@@ -200,17 +204,18 @@ def generate_guide(drug_name, profile_json, model, tokenizer):
     try:
         if not drug_name.strip():
             return _status_html("error", "Please enter a drug name first.")
-        p = json.loads(profile_json)
+        p = json.loads(profile_json) if profile_json else {}
         leaflet_text = get_drug_leaflet(drug_name.strip())
         if not leaflet_text:
             return _status_html("warning",
                 f"'{drug_name}' not found in DailyMed. "
                 f"Try the generic name (e.g. paracetamol instead of Panadol).")
+        sex = p.get("sex", "male")
         profile = UserProfile(
             age_group=p.get("age_group", "adult"),
-            sex=p.get("sex", "prefer_not_to_say"),
-            pregnant=p.get("pregnant", False) and p.get("sex") == "female",
-            breastfeeding=p.get("breastfeeding", False) and p.get("sex") == "female",
+            sex=sex,
+            pregnant=p.get("pregnant", False) and sex == "female",
+            breastfeeding=p.get("breastfeeding", False) and sex == "female",
             heart_condition=p.get("heart_condition", False),
             diabetes=p.get("diabetes", False),
             hypertension=p.get("hypertension", False),
@@ -230,297 +235,371 @@ def generate_guide(drug_name, profile_json, model, tokenizer):
 
 def build_demo(model, tokenizer, processor=None):
 
-    def _scan(pil_image):
-        return scan_image(pil_image, model, tokenizer, processor)
+    def _scan(img_b64, drug_name_current):
+        if not img_b64:
+            return drug_name_current, _status_html("warning", "No image uploaded.")
+        name, status = process_image_b64(img_b64, model, tokenizer, processor)
+        return name or drug_name_current, status
 
     def _generate(drug_name, profile_json):
         return generate_guide(drug_name, profile_json, model, tokenizer)
 
     CSS = """
-    * { box-sizing: border-box; }
-    body, .gradio-container, .main, .wrap, .app, .svelte-1gfkn6j {
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body, .gradio-container, .main, .wrap, .app {
         background: #F7F8FA !important;
-        color: #1A202C !important;
     }
     .gradio-container {
         max-width: 520px !important;
         min-width: 320px !important;
         margin: 0 auto !important;
-        padding: 0 0 40px !important;
+        padding: 0 !important;
         overflow-x: hidden !important;
     }
-    footer { display: none !important; }
+    footer, .built-with { display: none !important; }
     """
 
-    FORM_HTML = """
-<div id="legimed-app" style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
-     background:#F7F8FA;max-width:520px;margin:0 auto;padding:0 12px 16px;color:#1A202C;">
+    UI_HTML = """
+<style>
+  #lm { font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+        background:#F7F8FA;max-width:520px;margin:0 auto;
+        padding:0 12px 32px;color:#1A202C; }
+  .lm-card { background:#fff;border-radius:14px;border:1px solid #E2E8F0;
+             padding:14px 16px;margin-bottom:12px; }
+  .lm-step { display:flex;align-items:center;gap:8px;margin:16px 0 8px; }
+  .lm-step-num { width:22px;height:22px;border-radius:50%;background:#00A878;
+                 color:#fff;font-size:11px;font-weight:800;display:flex;
+                 align-items:center;justify-content:center;flex-shrink:0; }
+  .lm-step-label { font-size:13px;font-weight:700;color:#1A202C; }
+  .lm-label { font-size:11px;font-weight:600;color:#718096;margin-bottom:6px; }
+  .lm-pill-group { display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px; }
+  .lm-pill { padding:8px 16px;border-radius:999px;border:1.5px solid #E2E8F0;
+             background:#fff;color:#4A5568;font-size:12px;font-weight:600;
+             cursor:pointer;transition:all 0.15s; }
+  .lm-pill.active { background:#E6FFFA;border-color:#00A878;
+                    color:#065F46;font-weight:700; }
+  .lm-cond-grid { display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:12px; }
+  .lm-cond { padding:9px 10px;border-radius:10px;border:1.5px solid #E2E8F0;
+             background:#fff;color:#1A202C;font-size:12px;font-weight:500;
+             text-align:left;cursor:pointer;transition:all 0.15s; }
+  .lm-cond.active { background:#E6FFFA;border-color:#00A878;
+                    color:#065F46;font-weight:700; }
+  .lm-input { width:100%;padding:9px 12px;border-radius:10px;
+              border:1.5px solid #E2E8F0;background:#F7F8FA;
+              color:#1A202C;font-size:13px;margin-bottom:10px;
+              outline:none;font-family:inherit; }
+  .lm-input:focus { border-color:#00A878;background:#fff; }
+  .lm-upload-area { border:2px dashed #B2F5EA;border-radius:12px;
+                    padding:20px;text-align:center;background:#F8FFFD;
+                    cursor:pointer;margin-bottom:8px;transition:all 0.15s; }
+  .lm-upload-area:hover { border-color:#00A878;background:#E6FFFA; }
+  .lm-upload-area.has-image { border-style:solid;border-color:#00A878; }
+  .lm-preview { max-width:100%;max-height:180px;border-radius:8px;
+                object-fit:contain;display:none; }
+  .lm-upload-placeholder { color:#718096;font-size:13px; }
+  .lm-btn-scan { width:100%;padding:10px;border-radius:999px;
+                 border:1.5px solid #00A878;background:#fff;
+                 color:#00A878;font-size:13px;font-weight:600;
+                 cursor:pointer;margin-bottom:8px;transition:all 0.15s; }
+  .lm-btn-scan:hover { background:#E6FFFA; }
+  .lm-btn-scan:disabled { opacity:0.5;cursor:not-allowed; }
+  .lm-btn-generate { width:100%;padding:14px;border-radius:999px;
+                     border:none;background:linear-gradient(135deg,#00A878,#00875F);
+                     color:#fff;font-size:15px;font-weight:700;
+                     cursor:pointer;margin-top:4px;transition:all 0.15s; }
+  .lm-btn-generate:hover { opacity:0.92; }
+  .lm-btn-generate:disabled { opacity:0.5;cursor:not-allowed; }
+</style>
 
+<div id="lm">
   <!-- Header -->
   <div style="text-align:center;padding:20px 0 8px;">
     <div style="font-size:34px;">💊</div>
     <div style="font-size:26px;font-weight:800;color:#1A202C;margin-top:2px;">Legimed</div>
-    <div style="font-size:13px;color:#718096;margin-top:4px;">Your medication, made legible</div>
+    <div style="font-size:13px;color:#718096;margin-top:4px;">
+      Your medication, made legible</div>
   </div>
 
-  <!-- Step 1 -->
-  <div style="display:flex;align-items:center;gap:8px;margin:14px 0 8px;">
-    <div style="width:22px;height:22px;border-radius:50%;background:#00A878;color:#fff;
-         font-size:11px;font-weight:800;display:flex;align-items:center;
-         justify-content:center;">1</div>
-    <div style="font-size:13px;font-weight:700;color:#1A202C;">Your health profile</div>
+  <!-- Step 1: Profile -->
+  <div class="lm-step">
+    <div class="lm-step-num">1</div>
+    <div class="lm-step-label">Your health profile</div>
+  </div>
+  <div class="lm-card">
+    <div class="lm-label">Age group</div>
+    <div class="lm-pill-group">
+      <button class="lm-pill" onclick="setAge('child')">Child</button>
+      <button class="lm-pill active" onclick="setAge('adult')">Adult</button>
+      <button class="lm-pill" onclick="setAge('elderly')">Elderly</button>
+    </div>
+    <div class="lm-label">Sex</div>
+    <div class="lm-pill-group">
+      <button class="lm-pill active" onclick="setSex('male')">Male</button>
+      <button class="lm-pill" onclick="setSex('female')">Female</button>
+    </div>
+    <div class="lm-label">Chronic conditions <span style="font-weight:400;">(tap to select)</span></div>
+    <div class="lm-cond-grid">
+      <button class="lm-cond" onclick="toggleCond(this,'heart_condition')">❤️ Heart disease</button>
+      <button class="lm-cond" onclick="toggleCond(this,'diabetes')">🩸 Diabetes</button>
+      <button class="lm-cond" onclick="toggleCond(this,'hypertension')">💉 Hypertension</button>
+      <button class="lm-cond" onclick="toggleCond(this,'asthma')">🫁 Asthma</button>
+      <button class="lm-cond" onclick="toggleCond(this,'kidney_issue')">🫘 Kidney</button>
+      <button class="lm-cond" onclick="toggleCond(this,'liver_issue')">🫀 Liver</button>
+      <button class="lm-cond" id="btn-pregnant" onclick="toggleCond(this,'pregnant')">🤰 Pregnant</button>
+      <button class="lm-cond" id="btn-breastfeeding" onclick="toggleCond(this,'breastfeeding')">🍼 Breastfeeding</button>
+    </div>
+    <div class="lm-label">⚠️ Known allergies</div>
+    <input class="lm-input" id="lm-allergies" type="text"
+      placeholder="e.g. penicillin, sulfa, aspirin" oninput="sync()"/>
+    <div class="lm-label">💊 Current medications</div>
+    <input class="lm-input" id="lm-meds" type="text"
+      placeholder="e.g. aspirin, metformin, lisinopril" oninput="sync()" style="margin-bottom:0;"/>
   </div>
 
-  <div style="background:#ffffff;border-radius:14px;border:1px solid #E2E8F0;padding:14px 16px;">
-
-    <!-- Age group -->
-    <div style="font-size:11px;font-weight:600;color:#718096;margin-bottom:6px;">Age group</div>
-    <div style="display:flex;gap:6px;margin-bottom:12px;">
-      <button onclick="setAge('child')" id="age-child"
-        style="flex:1;padding:8px;border-radius:999px;border:1.5px solid #E2E8F0;
-               background:#fff;color:#4A5568;font-size:12px;font-weight:600;cursor:pointer;">
-        Child</button>
-      <button onclick="setAge('adult')" id="age-adult"
-        style="flex:1;padding:8px;border-radius:999px;border:1.5px solid #00A878;
-               background:#E6FFFA;color:#065F46;font-size:12px;font-weight:700;cursor:pointer;">
-        Adult</button>
-      <button onclick="setAge('elderly')" id="age-elderly"
-        style="flex:1;padding:8px;border-radius:999px;border:1.5px solid #E2E8F0;
-               background:#fff;color:#4A5568;font-size:12px;font-weight:600;cursor:pointer;">
-        Elderly</button>
+  <!-- Step 2: Medication -->
+  <div class="lm-step">
+    <div class="lm-step-num">2</div>
+    <div class="lm-step-label">Your medication</div>
+  </div>
+  <div class="lm-card">
+    <div class="lm-label">📷 Scan medicine box (optional)</div>
+    <div class="lm-upload-area" id="lm-drop" onclick="document.getElementById('lm-file').click()">
+      <img id="lm-preview" class="lm-preview" src="" alt="preview"/>
+      <div class="lm-upload-placeholder" id="lm-placeholder">
+        <div style="font-size:24px;margin-bottom:6px;">📷</div>
+        <div>Tap to upload or take photo</div>
+        <div style="font-size:11px;color:#A0AEC0;margin-top:4px;">JPG, PNG, WEBP</div>
+      </div>
     </div>
-
-    <!-- Sex -->
-    <div style="font-size:11px;font-weight:600;color:#718096;margin-bottom:6px;">Sex</div>
-    <div style="display:flex;gap:6px;margin-bottom:12px;">
-      <button onclick="setSex('male')" id="sex-male"
-        style="flex:1;padding:8px;border-radius:999px;border:1.5px solid #00A878;
-               background:#E6FFFA;color:#065F46;font-size:12px;font-weight:700;cursor:pointer;">
-        Male</button>
-      <button onclick="setSex('female')" id="sex-female"
-        style="flex:1;padding:8px;border-radius:999px;border:1.5px solid #E2E8F0;
-               background:#fff;color:#4A5568;font-size:12px;font-weight:600;cursor:pointer;">
-        Female</button>
-    </div>
-
-    <!-- Conditions -->
-    <div style="font-size:11px;font-weight:600;color:#718096;margin-bottom:8px;">
-      Chronic conditions</div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:12px;">
-      <button onclick="toggleCond(this,'heart_condition')"
-        style="padding:9px 10px;border-radius:10px;border:1.5px solid #E2E8F0;
-               background:#fff;color:#1A202C;font-size:12px;font-weight:500;
-               text-align:left;cursor:pointer;">❤️ Heart disease</button>
-      <button onclick="toggleCond(this,'diabetes')"
-        style="padding:9px 10px;border-radius:10px;border:1.5px solid #E2E8F0;
-               background:#fff;color:#1A202C;font-size:12px;font-weight:500;
-               text-align:left;cursor:pointer;">🩸 Diabetes</button>
-      <button onclick="toggleCond(this,'hypertension')"
-        style="padding:9px 10px;border-radius:10px;border:1.5px solid #E2E8F0;
-               background:#fff;color:#1A202C;font-size:12px;font-weight:500;
-               text-align:left;cursor:pointer;">💉 Hypertension</button>
-      <button onclick="toggleCond(this,'asthma')"
-        style="padding:9px 10px;border-radius:10px;border:1.5px solid #E2E8F0;
-               background:#fff;color:#1A202C;font-size:12px;font-weight:500;
-               text-align:left;cursor:pointer;">🫁 Asthma</button>
-      <button onclick="toggleCond(this,'kidney_issue')"
-        style="padding:9px 10px;border-radius:10px;border:1.5px solid #E2E8F0;
-               background:#fff;color:#1A202C;font-size:12px;font-weight:500;
-               text-align:left;cursor:pointer;">🫘 Kidney</button>
-      <button onclick="toggleCond(this,'liver_issue')"
-        style="padding:9px 10px;border-radius:10px;border:1.5px solid #E2E8F0;
-               background:#fff;color:#1A202C;font-size:12px;font-weight:500;
-               text-align:left;cursor:pointer;">🫀 Liver</button>
-      <button onclick="toggleCond(this,'pregnant')" id="btn-pregnant"
-        style="padding:9px 10px;border-radius:10px;border:1.5px solid #E2E8F0;
-               background:#fff;color:#1A202C;font-size:12px;font-weight:500;
-               text-align:left;cursor:pointer;">🤰 Pregnant</button>
-      <button onclick="toggleCond(this,'breastfeeding')" id="btn-breastfeeding"
-        style="padding:9px 10px;border-radius:10px;border:1.5px solid #E2E8F0;
-               background:#fff;color:#1A202C;font-size:12px;font-weight:500;
-               text-align:left;cursor:pointer;">🍼 Breastfeeding</button>
-    </div>
-
-    <!-- Allergies -->
-    <div style="font-size:11px;font-weight:600;color:#718096;margin-bottom:4px;">
-      ⚠️ Known allergies</div>
-    <input id="input-allergies" type="text"
-      placeholder="e.g. penicillin, sulfa, aspirin"
-      style="width:100%;padding:9px 12px;border-radius:10px;
-             border:1.5px solid #E2E8F0;background:#F7F8FA;
-             color:#1A202C;font-size:13px;margin-bottom:10px;outline:none;"
-      oninput="updateProfile()"/>
-
-    <!-- Current meds -->
-    <div style="font-size:11px;font-weight:600;color:#718096;margin-bottom:4px;">
-      💊 Current medications</div>
-    <input id="input-meds" type="text"
-      placeholder="e.g. aspirin, metformin, lisinopril"
-      style="width:100%;padding:9px 12px;border-radius:10px;
-             border:1.5px solid #E2E8F0;background:#F7F8FA;
-             color:#1A202C;font-size:13px;outline:none;"
-      oninput="updateProfile()"/>
+    <input type="file" id="lm-file" accept="image/*" capture="environment"
+      style="display:none;" onchange="handleFile(this)"/>
+    <button class="lm-btn-scan" id="lm-scan-btn" onclick="doScan()" disabled>
+      🔍 Scan image</button>
+    <div id="lm-scan-status" style="margin-bottom:8px;"></div>
+    <div class="lm-label">💊 Drug name</div>
+    <input class="lm-input" id="lm-drug" type="text"
+      placeholder="Auto-filled after scan, or type here"
+      oninput="sync()" style="margin-bottom:0;"/>
   </div>
 
-  <!-- Step 2 label -->
-  <div style="display:flex;align-items:center;gap:8px;margin:14px 0 8px;">
-    <div style="width:22px;height:22px;border-radius:50%;background:#00A878;color:#fff;
-         font-size:11px;font-weight:800;display:flex;align-items:center;
-         justify-content:center;">2</div>
-    <div style="font-size:13px;font-weight:700;color:#1A202C;">Your medication</div>
+  <!-- Step 3: Generate -->
+  <div class="lm-step">
+    <div class="lm-step-num">3</div>
+    <div class="lm-step-label">Generate your guide</div>
+  </div>
+  <button class="lm-btn-generate" id="lm-gen-btn" onclick="doGenerate()">
+    Generate my guide →</button>
+
+  <div style="font-size:13px;font-weight:700;color:#1A202C;margin:14px 0 6px;">
+    Your guide</div>
+  <div id="lm-output"
+    style="color:#718096;font-size:13px;padding:2rem 1rem;text-align:center;
+           background:#fff;border-radius:14px;border:1.5px dashed #E2E8F0;">
+    Complete the steps above to generate your guide.</div>
+
+  <div style="text-align:center;padding:16px 0 4px;">
+    <div style="font-size:10px;color:#A0AEC0;line-height:1.6;">
+      Gemma 4 · NIH DailyMed · Apache 2.0 ·
+      <a href="https://github.com/LorraineWong/legimed"
+         style="color:#00A878;text-decoration:none;">GitHub</a>
+    </div>
   </div>
 </div>
 
 <script>
-var profile = {
-  age_group: "adult", sex: "male",
+var lm = {
+  age_group:"adult", sex:"male",
   heart_condition:false, diabetes:false, hypertension:false, asthma:false,
   kidney_issue:false, liver_issue:false, pregnant:false, breastfeeding:false,
-  allergies:"", other_meds:""
+  allergies:"", other_meds:"", drug_name:"", img_b64:""
 };
 
 function setAge(v) {
-  profile.age_group = v;
-  ["child","adult","elderly"].forEach(function(a) {
-    var b = document.getElementById("age-"+a);
-    if (!b) return;
-    if (a === v) {
-      b.style.background="#E6FFFA"; b.style.borderColor="#00A878";
-      b.style.color="#065F46"; b.style.fontWeight="700";
-    } else {
-      b.style.background="#fff"; b.style.borderColor="#E2E8F0";
-      b.style.color="#4A5568"; b.style.fontWeight="600";
-    }
+  lm.age_group = v;
+  document.querySelectorAll('.lm-pill-group:nth-of-type(1) .lm-pill').forEach(function(b){
+    var active = b.textContent.trim().toLowerCase() === v;
+    b.classList.toggle('active', active);
   });
-  updateProfile();
+  sync();
 }
 
 function setSex(v) {
-  profile.sex = v;
-  ["male","female"].forEach(function(s) {
-    var b = document.getElementById("sex-"+s);
-    if (!b) return;
-    if (s === v) {
-      b.style.background="#E6FFFA"; b.style.borderColor="#00A878";
-      b.style.color="#065F46"; b.style.fontWeight="700";
-    } else {
-      b.style.background="#fff"; b.style.borderColor="#E2E8F0";
-      b.style.color="#4A5568"; b.style.fontWeight="600";
-    }
+  lm.sex = v;
+  document.querySelectorAll('.lm-pill-group:nth-of-type(2) .lm-pill').forEach(function(b){
+    var active = b.textContent.trim().toLowerCase() === v;
+    b.classList.toggle('active', active);
   });
-  var show = v === "female";
-  var pb = document.getElementById("btn-pregnant");
-  var bb = document.getElementById("btn-breastfeeding");
-  if (pb) pb.style.opacity = show ? "1" : "0.3";
-  if (bb) bb.style.opacity = show ? "1" : "0.3";
-  updateProfile();
+  var female = v === 'female';
+  ['btn-pregnant','btn-breastfeeding'].forEach(function(id){
+    var b = document.getElementById(id);
+    if(b) b.style.opacity = female ? '1' : '0.4';
+  });
+  sync();
 }
 
 function toggleCond(btn, key) {
-  profile[key] = !profile[key];
-  if (profile[key]) {
-    btn.style.background="#E6FFFA"; btn.style.borderColor="#00A878";
-    btn.style.color="#065F46"; btn.style.fontWeight="700";
+  lm[key] = !lm[key];
+  btn.classList.toggle('active', lm[key]);
+  sync();
+}
+
+function handleFile(input) {
+  var file = input.files[0];
+  if (!file) return;
+  var reader = new FileReader();
+  reader.onload = function(e) {
+    var dataUrl = e.target.result;
+    lm.img_b64 = dataUrl.split(',')[1];
+    var preview = document.getElementById('lm-preview');
+    var placeholder = document.getElementById('lm-placeholder');
+    var drop = document.getElementById('lm-drop');
+    preview.src = dataUrl;
+    preview.style.display = 'block';
+    placeholder.style.display = 'none';
+    drop.classList.add('has-image');
+    document.getElementById('lm-scan-btn').disabled = false;
+    sync();
+  };
+  reader.readAsDataURL(file);
+}
+
+function sync() {
+  lm.allergies = (document.getElementById('lm-allergies')||{}).value || '';
+  lm.other_meds = (document.getElementById('lm-meds')||{}).value || '';
+  lm.drug_name = (document.getElementById('lm-drug')||{}).value || '';
+  // Push to Gradio hidden textboxes
+  setGradio('lm-profile-state', JSON.stringify({
+    age_group:lm.age_group, sex:lm.sex,
+    heart_condition:lm.heart_condition, diabetes:lm.diabetes,
+    hypertension:lm.hypertension, asthma:lm.asthma,
+    kidney_issue:lm.kidney_issue, liver_issue:lm.liver_issue,
+    pregnant:lm.pregnant, breastfeeding:lm.breastfeeding,
+    allergies:lm.allergies, other_meds:lm.other_meds
+  }));
+  setGradio('lm-drug-state', lm.drug_name);
+  setGradio('lm-img-state', lm.img_b64);
+}
+
+function setGradio(id, value) {
+  var el = document.getElementById(id);
+  if (!el) return;
+  var input = el.querySelector('textarea, input');
+  if (!input) return;
+  var nativeSetter = Object.getOwnPropertyDescriptor(
+    window.HTMLTextAreaElement.prototype, 'value') ||
+    Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value');
+  if (nativeSetter && nativeSetter.set) {
+    nativeSetter.set.call(input, value);
   } else {
-    btn.style.background="#fff"; btn.style.borderColor="#E2E8F0";
-    btn.style.color="#1A202C"; btn.style.fontWeight="500";
+    input.value = value;
   }
-  updateProfile();
+  input.dispatchEvent(new Event('input', {bubbles:true}));
 }
 
-function updateProfile() {
-  var a = document.getElementById("input-allergies");
-  var m = document.getElementById("input-meds");
-  if (a) profile.allergies = a.value;
-  if (m) profile.other_meds = m.value;
-  var el = document.getElementById("profile-state");
-  if (el) el.value = JSON.stringify(profile);
-  // Trigger Gradio change event
-  var event = new Event("input", {bubbles:true});
-  if (el) el.dispatchEvent(event);
+function doScan() {
+  var btn = document.getElementById('lm-scan-btn');
+  var status = document.getElementById('lm-scan-status');
+  if (!lm.img_b64) return;
+  btn.disabled = true;
+  btn.textContent = '⏳ Scanning…';
+  status.innerHTML = '';
+  sync();
+  // Trigger Gradio scan button
+  var gradioBtn = document.getElementById('lm-scan-trigger');
+  if (gradioBtn) {
+    var b = gradioBtn.querySelector('button');
+    if (b) b.click();
+  }
 }
 
-// Init
-document.addEventListener("DOMContentLoaded", function() { updateProfile(); });
-setTimeout(function() { updateProfile(); }, 500);
+function doGenerate() {
+  sync();
+  var output = document.getElementById('lm-output');
+  output.innerHTML = "<div style='text-align:center;padding:2rem;color:#00A878;'>" +
+    "⏳ Generating your guide…<br>" +
+    "<span style='font-size:11px;color:#718096;'>About 45 seconds</span></div>";
+  var gradioBtn = document.getElementById('lm-gen-trigger');
+  if (gradioBtn) {
+    var b = gradioBtn.querySelector('button');
+    if (b) b.click();
+  }
+}
+
+// Watch Gradio output changes and mirror to our div
+function watchOutput() {
+  var el = document.getElementById('lm-gradio-output');
+  if (!el) return;
+  var observer = new MutationObserver(function() {
+    var content = el.innerHTML;
+    if (content && content.trim()) {
+      document.getElementById('lm-output').innerHTML = content;
+      // Reset scan button
+      var btn = document.getElementById('lm-scan-btn');
+      if (btn) { btn.disabled = false; btn.textContent = '🔍 Scan image'; }
+    }
+  });
+  observer.observe(el, {childList:true, subtree:true, characterData:true});
+}
+
+// Watch scan status changes
+function watchScanStatus() {
+  var el = document.getElementById('lm-scan-status-gradio');
+  if (!el) return;
+  var observer = new MutationObserver(function() {
+    var content = el.innerHTML;
+    document.getElementById('lm-scan-status').innerHTML = content;
+    // Update drug name if detected
+    var strong = el.querySelector('strong');
+    if (strong) {
+      var drug = strong.textContent.trim();
+      if (drug) {
+        var input = document.getElementById('lm-drug');
+        if (input) { input.value = drug; lm.drug_name = drug; sync(); }
+      }
+    }
+    var btn = document.getElementById('lm-scan-btn');
+    if (btn) { btn.disabled = false; btn.textContent = '🔍 Scan image'; }
+  });
+  observer.observe(el, {childList:true, subtree:true, characterData:true});
+}
+
+setTimeout(function() { watchOutput(); watchScanStatus(); sync(); }, 1000);
 </script>
 """
 
     with gr.Blocks(title="Legimed", css=CSS) as demo:
 
-        gr.HTML(FORM_HTML)
+        gr.HTML(UI_HTML)
 
-        # Hidden state for profile JSON
+        # Hidden Gradio state components
         profile_state = gr.Textbox(
-            value='{"age_group":"adult","sex":"male"}',
-            visible=False,
-            elem_id="profile-state"
-        )
+            value='{}', visible=False, elem_id="lm-profile-state")
+        drug_state = gr.Textbox(
+            value='', visible=False, elem_id="lm-drug-state")
+        img_state = gr.Textbox(
+            value='', visible=False, elem_id="lm-img-state")
 
-        # Image + scan (Gradio handles file upload)
-        with gr.Group():
-            image_input = gr.Image(
-                type="pil",
-                label="📷 Scan medicine box (optional)",
-                sources=["upload", "webcam", "clipboard"],
-                height=180,
-            )
-            scan_btn    = gr.Button("🔍 Scan image", variant="secondary", size="sm")
-            scan_status = gr.HTML(value="")
-            drug_input  = gr.Textbox(
-                label="💊 Drug name",
-                placeholder="Auto-filled after scan, or type here",
-            )
+        # Hidden scan trigger button
+        with gr.Row(visible=False, elem_id="lm-scan-trigger"):
+            scan_btn = gr.Button("scan")
 
-        gr.HTML("""
-        <div style="display:flex;align-items:center;gap:8px;margin:14px 0 8px;
-                    padding:0 12px;">
-          <div style="width:22px;height:22px;border-radius:50%;background:#00A878;
-               color:#fff;font-size:11px;font-weight:800;display:flex;
-               align-items:center;justify-content:center;">3</div>
-          <div style="font-size:13px;font-weight:700;color:#1A202C;">
-            Generate your guide</div>
-        </div>""")
+        # Hidden generate trigger button
+        with gr.Row(visible=False, elem_id="lm-gen-trigger"):
+            gen_btn = gr.Button("generate")
 
-        generate_btn = gr.Button(
-            "Generate my guide →", variant="primary", size="lg")
-
-        gr.HTML("<div style='font-size:13px;font-weight:700;color:#1A202C;"
-                "margin:14px 12px 6px;'>Your guide</div>")
-
-        output = gr.HTML(
-            value="<div style='color:#718096;font-size:13px;padding:2rem 1rem;"
-                  "text-align:center;background:#ffffff;border-radius:14px;"
-                  "border:1.5px dashed #E2E8F0;margin:0 12px;'>"
-                  "Complete the steps above to generate your guide.</div>")
-
-        gr.HTML("""<div style="text-align:center;padding:16px 0 4px;">
-          <div style="font-size:10px;color:#A0AEC0;line-height:1.6;">
-            Gemma 4 · NIH DailyMed · Apache 2.0 ·
-            <a href="https://github.com/LorraineWong/legimed"
-               style="color:#00A878;text-decoration:none;">GitHub</a>
-          </div></div>""")
+        # Hidden output (mirrored to HTML div by JS)
+        scan_status_out = gr.HTML(value="", elem_id="lm-scan-status-gradio", visible=False)
+        output = gr.HTML(value="", elem_id="lm-gradio-output", visible=False)
 
         scan_btn.click(
-            fn=lambda: (gr.update(interactive=False), ""),
-            inputs=None, outputs=[scan_btn, scan_status], queue=False
-        ).then(
-            fn=_scan, inputs=[image_input], outputs=[drug_input, scan_status]
-        ).then(
-            fn=lambda: gr.update(interactive=True),
-            inputs=None, outputs=[scan_btn], queue=False
+            fn=lambda img_b64, drug: _scan(img_b64, drug),
+            inputs=[img_state, drug_state],
+            outputs=[drug_state, scan_status_out]
         )
 
-        generate_btn.click(
-            fn=lambda: ("<div style='text-align:center;padding:2rem 1rem;"
-                        "color:#00A878;font-size:13px;background:#ffffff;"
-                        "border-radius:14px;margin:0 12px;'>⏳ Generating…<br>"
-                        "<span style='font-size:11px;color:#718096;'>"
-                        "About 45 seconds</span></div>"),
-            inputs=None, outputs=output, queue=False
-        ).then(
+        gen_btn.click(
             fn=_generate,
-            inputs=[drug_input, profile_state],
+            inputs=[drug_state, profile_state],
             outputs=output
         )
 
