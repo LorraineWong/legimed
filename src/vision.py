@@ -38,23 +38,31 @@ def preprocess_image(pil_image: Image.Image) -> Image.Image:
 def extract_drug_name_gemma(pil_image: Image.Image, model, tokenizer) -> str:
     """
     Use Gemma 4 vision to extract drug name from medication box photo.
+    Uses the already-loaded tokenizer directly — no AutoProcessor needed.
     Returns drug name string, or empty string if not found.
     """
     import torch
-    from transformers import AutoProcessor
 
-    prompt = """Look at this medication box or label photo carefully.
-Extract ONLY the drug name (generic or brand name).
-Do not include dosage amounts, manufacturer names, or instructions.
-Reply with just the drug name, nothing else. If you cannot identify a drug name, reply with UNKNOWN."""
+    prompt = """Look at this medication box or label photo.
+What is the drug name or medicine name shown on this box?
+Reply with ONLY the drug name (e.g. "Panadol", "Warfarin", "Metformin").
+Do not include dosage, brand taglines, or manufacturer.
+If you cannot read a drug name, reply UNKNOWN."""
 
-    processor = AutoProcessor.from_pretrained(tokenizer.name_or_path)
+    # Encode image to base64 and build multimodal input
+    buffer = BytesIO()
+    preprocess_image(pil_image).save(buffer, format="JPEG", quality=85)
+    img_b64 = base64.b64encode(buffer.getvalue()).decode("utf-8")
 
-    inputs = processor(
-        text=f"<start_of_turn>user\n<image>\n{prompt}<end_of_turn>\n<start_of_turn>model\n",
-        images=pil_image,
-        return_tensors="pt"
-    ).to(model.device)
+    # Build prompt with inline image token
+    full_prompt = (
+        f"<start_of_turn>user\n"
+        f"<img src='data:image/jpeg;base64,{img_b64}'/>\n"
+        f"{prompt}<end_of_turn>\n"
+        f"<start_of_turn>model\n"
+    )
+
+    inputs = tokenizer(full_prompt, return_tensors="pt").to(model.device)
 
     with torch.no_grad():
         outputs = model.generate(
