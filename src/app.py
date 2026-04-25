@@ -159,8 +159,8 @@ def run_legimed_from_image(pil_image, age_group, pregnant, kidney_issue,
                             liver_issue, other_meds, model, tokenizer):
     """
     Image input pipeline:
-      1. Tesseract OCR extracts text from photo
-      2. Heuristic guesses drug name from OCR text
+      1. Gemma 4 vision identifies drug name from photo (primary)
+      2. Tesseract OCR + heuristic fallback if Gemma fails
       3. DailyMed fetches full leaflet text
       4. Gemma 4 extracts structured DrugInfo JSON (same as text tab)
       5. Personalisation engine re-prioritises warnings for user profile
@@ -172,18 +172,15 @@ def run_legimed_from_image(pil_image, age_group, pregnant, kidney_issue,
         return ("", "<p style='color:#991B1B;padding:1rem;'>Please upload a photo first.</p>")
 
     try:
-        drug_name, raw_ocr = image_to_drug_name(pil_image)
+        drug_name, method_used = image_to_drug_name(pil_image, model, tokenizer)
         drug_name = drug_name.strip()
 
-        # If heuristic failed, surface raw OCR so user can read and correct
         if not drug_name:
-            preview = raw_ocr[:120].replace("\n", " ") if raw_ocr else ""
             return (
-                preview,
+                "",
                 f"<p style='color:#92400E;padding:1rem;background:#FEF3C7;border-radius:8px;'>"
-                f"Could not confidently detect drug name from image.<br><br>"
-                f"OCR text preview: <em>{preview}</em><br><br>"
-                f"Please edit the drug name field above and click <strong>Use this name</strong>.</p>"
+                f"Could not identify drug name from image (method tried: {method_used}).<br><br>"
+                f"Please type the drug name in the field above and click <strong>Use this name</strong>.</p>"
             )
 
         leaflet_text = get_drug_leaflet(drug_name)

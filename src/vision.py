@@ -1,27 +1,24 @@
 """
 vision.py — Image input pipeline for Legimed.
-Tesseract OCR extracts text from drug box photo.
-Extracted text is passed to Gemma 4 for processing.
-Gemma 4 remains the core AI engine (hackathon compliant).
+Primary: Gemma 4 multimodal vision extracts drug name directly from photo.
+Fallback: Tesseract OCR + heuristic if model not available.
 """
 
 import re
+import base64
+from io import BytesIO
 from PIL import Image
 
 
 def tesseract_status() -> tuple[bool, str]:
-    """
-    Check Tesseract availability and return (ok, message).
-    Call this at Gradio launch time to surface problems early.
-    """
+    """Check Tesseract availability and return (ok, message)."""
     try:
         import pytesseract
         version = pytesseract.get_tesseract_version()
-        # Check which language packs are available
         langs = pytesseract.get_languages(config='')
         missing = [l for l in ["eng", "chi_sim"] if l not in langs]
         if missing:
-            return False, f"Tesseract found (v{version}) but missing language packs: {missing}. Run install_tesseract_colab()."
+            return False, f"Tesseract found (v{version}) but missing language packs: {missing}."
         return True, f"Tesseract OK (v{version}), langs: {langs}"
     except Exception as e:
         return False, f"Tesseract not available: {e}"
@@ -38,14 +35,73 @@ def preprocess_image(pil_image: Image.Image) -> Image.Image:
     return img
 
 
-def extract_text_from_image(pil_image: Image.Image) -> str:
+def image_to_base64(pil_image: Image.Image) -> str:
+    """Convert PIL image to base64 string for Gemma multimodal input."""
+    img = preprocess_image(pil_image)
+    buffer = BytesIO()
+    img.save(buffer, format="JPEG", quality=85)
+    return base64.b64encode(buffer.getvalue()).decode("utf-8")
+
+
+def extract_drug_name_gemma(pil_image: Image.Image, model, tokenizer) -> str:
     """
-    Extract all visible text from a medication photo using Tesseract OCR.
-    Returns raw text string. Returns empty string (not raises) if Tesseract unavailable.
+    Use Gemma 4 vision to extract drug name from medication box photo.
+    Returns drug name string, or empty string if not found.
     """
+    import torch
+
+    prompt = """Look at this medication box or label photo carefully.
+Extract ONLY the drug name (generic or brand name).
+Do not include dosage amounts, manufacturer names, or instructions.
+Reply with just the drug name, nothing else. If you cannot identify a drug name, reply with UNKNOWN."""
+
+    img_b64 = image_to_base64(pil_image)
+
+    # Gemma multimodal input format
+    inputs = tokenizer(
+        f"<start_of_turn>user\n<image>\n{prompt}<end_of_turn>\n<start_of_turn>model\n",
+        return_tensors="pt"
+    ).to(model.device)
+
+    # Add image to inputs
+    from transformers import AutoProcessor
+    processor = AutoProcessor.from_pretrained(tokenizer.name_or_path)
+
+    inputs = processor(
+        text=f"<start_of_turn>user\n<image>\n{prompt}<end_of_turn>\n<start_of_turn>model\n",
+        images=pil_image,
+        return_tensors="pt"
+    ).to(model.device)
+
+    with torch.no_grad():
+        outputs = model.generate(
+            **inputs,
+            max_new_tokens=20,
+            temperature=0,
+            do_sample=False,
+        )
+
+    response = tokenizer.decode(
+        outputs[0][inputs["input_ids"].shape[-1]:],
+        skip_special_tokens=True
+    ).strip()
+
+    # Clean up response
+    drug_name = response.strip().split("\n")[0].strip()
+
+    # Strip dosage if attached e.g. "Warfarin 5mg" -> "Warfarin"
+    drug_name = re.sub(r'\s+\d+\s*(mg|mcg|ml|%|iu).*$', '', drug_name, flags=re.IGNORECASE).strip()
+
+    if not drug_name or drug_name.upper() == "UNKNOWN" or len(drug_name) > 50:
+        return ""
+
+    return drug_name
+
+
+def extract_text_tesseract(pil_image: Image.Image) -> str:
+    """Fallback: Tesseract OCR. Returns empty string if unavailable."""
     ok, msg = tesseract_status()
     if not ok:
-        # Return empty string — caller will handle gracefully
         print(f"[vision] {msg}")
         return ""
 
@@ -65,14 +121,7 @@ def extract_text_from_image(pil_image: Image.Image) -> str:
 
 
 def guess_drug_name_from_text(text: str) -> str:
-    """
-    Extract drug name from raw OCR text.
-    Strategy:
-      1. Look for lines near dosage markers (mg/mcg/ml) — highest confidence
-      2. Look for ALL CAPS or Title Case short lines in first 20 lines
-      3. Fall back to first non-empty line if nothing scores well
-    Penalty words filter out instructions, addresses, batch info.
-    """
+    """Heuristic drug name extraction from raw OCR text."""
     lines = [l.strip() for l in text.splitlines() if l.strip()]
     if not lines:
         return ""
@@ -94,7 +143,6 @@ def guess_drug_name_from_text(text: str) -> str:
         if not clean or len(clean) < 2:
             continue
 
-        # Lines appearing earlier on the label are more likely the drug name
         if i < 3:
             score += 3
         elif i < 6:
@@ -108,48 +156,57 @@ def guess_drug_name_from_text(text: str) -> str:
         elif word_count > 6:
             score -= 2
 
-        # ALL CAPS short line = strong drug name signal
         if clean.isupper() and word_count <= 4:
             score += 4
         elif clean.istitle():
             score += 2
 
-        # Penalise instruction-like lines
         if any(w in clean.lower() for w in penalty_words):
             score -= 5
 
-        # Bonus: dosage marker on same line (e.g. "Warfarin 5mg")
         if re.search(r'\d+\s*(mg|mcg|ml|%|iu)', line, re.IGNORECASE):
             score += 3
 
-        # Bonus: looks like a drug name pattern (letters only, possibly with numbers)
         if re.match(r'^[A-Za-z][A-Za-z\s\-]+$', clean) and word_count <= 3:
             score += 2
 
         if score > best_score:
             best_score = score
-            # Take first 1-3 words only as the drug name
             best = " ".join(clean.split()[:3])
 
-    # Strip trailing dosage if attached: "Warfarin 5" -> "Warfarin"
     best = re.sub(r'\s+\d+$', '', best).strip()
-
     return best
 
 
-def image_to_drug_name(pil_image: Image.Image) -> tuple[str, str]:
+def image_to_drug_name(pil_image: Image.Image, model=None, tokenizer=None) -> tuple[str, str]:
     """
     Main entry point for image tab.
-    Photo -> Tesseract OCR -> heuristic drug name extraction.
+    Primary: Gemma 4 vision (if model provided).
+    Fallback: Tesseract OCR + heuristic.
 
     Returns:
-        (drug_name, raw_ocr_text)
-        drug_name: best guess at drug name, empty string if failed
-        raw_ocr_text: full OCR output for debugging / user review
+        (drug_name, method_used)
+        drug_name: best guess, empty string if failed
+        method_used: "gemma" | "tesseract" | "failed"
     """
-    raw_text = extract_text_from_image(pil_image)
+    # Primary: Gemma vision
+    if model is not None and tokenizer is not None:
+        print("[vision] Using Gemma 4 vision to identify drug...")
+        try:
+            drug_name = extract_drug_name_gemma(pil_image, model, tokenizer)
+            if drug_name:
+                print(f"[vision] Gemma identified: {drug_name}")
+                return drug_name, "gemma"
+            else:
+                print("[vision] Gemma returned empty, falling back to Tesseract...")
+        except Exception as e:
+            print(f"[vision] Gemma vision failed: {e}, falling back to Tesseract...")
+
+    # Fallback: Tesseract
+    raw_text = extract_text_tesseract(pil_image)
     drug_name = guess_drug_name_from_text(raw_text)
-    return drug_name, raw_text
+    method = "tesseract" if drug_name else "failed"
+    return drug_name, method
 
 
 def install_tesseract_colab():
