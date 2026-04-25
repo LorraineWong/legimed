@@ -268,12 +268,28 @@ def build_demo(model, tokenizer, processor=None):
 
     with gr.Blocks(
         title="Legimed",
-        theme=gr.themes.Soft(),
+        theme=gr.themes.Base(
+            primary_hue="green",
+            neutral_hue="slate",
+        ),
         css="""
         :root { color-scheme: light only !important; }
         body, .gradio-container, .main {
             background: #F7F8FA !important;
             color: #1A202C !important;
+        }
+        :root, [data-theme] {
+            --body-background-fill: #F7F8FA !important;
+            --background-fill-primary: #ffffff !important;
+            --background-fill-secondary: #F7F8FA !important;
+            --border-color-primary: #E2E8F0 !important;
+            --color-accent: #00A878 !important;
+            --input-background-fill: #ffffff !important;
+            --block-background-fill: #ffffff !important;
+            --panel-background-fill: #F7F8FA !important;
+            --body-text-color: #1A202C !important;
+            --block-label-text-color: #1A202C !important;
+            --input-text: #1A202C !important;
         }
         .gradio-container {
             max-width: 520px !important;
