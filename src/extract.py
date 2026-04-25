@@ -91,7 +91,7 @@ JSON OUTPUT:"""
     with torch.no_grad():
         outputs = model.generate(
             **inputs,
-            max_new_tokens=1200,
+            max_new_tokens=2400,
             temperature=0,
             do_sample=False,
         )
