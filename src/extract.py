@@ -81,7 +81,7 @@ JSON OUTPUT:"""
 
     outputs = model.generate(
         **inputs,
-        max_new_tokens=1500,
+        max_new_tokens=1200,
         temperature=0,
         do_sample=False,
     )
