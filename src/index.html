@@ -1,0 +1,463 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Legimed — Your Medication, Made Legible</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+     background:#F7F8FA;color:#1A202C;min-height:100vh;}
+.app{max-width:520px;margin:0 auto;padding:0 14px 48px;}
+
+/* Header */
+.header{text-align:center;padding:28px 0 10px;}
+.header-icon{font-size:38px;}
+.header-title{font-size:28px;font-weight:800;color:#1A202C;
+              letter-spacing:-0.03em;margin-top:4px;}
+.header-sub{font-size:13px;color:#6B7280;margin-top:6px;line-height:1.6;}
+
+/* Step header */
+.step-hdr{display:flex;align-items:center;gap:8px;margin:18px 0 10px;}
+.step-num{width:24px;height:24px;border-radius:50%;background:#00A878;
+          color:#fff;font-size:12px;font-weight:800;display:flex;
+          align-items:center;justify-content:center;flex-shrink:0;}
+.step-title{font-size:14px;font-weight:700;color:#1A202C;}
+.step-sub{font-size:11px;color:#6B7280;margin-top:1px;}
+
+/* Card */
+.card{background:#fff;border:1px solid #E2E8F0;border-radius:16px;
+      padding:16px;margin-bottom:12px;
+      box-shadow:0 2px 10px rgba(0,0,0,0.05);}
+
+/* Pill selector */
+.pill-group{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px;}
+.pill{padding:8px 16px;border-radius:999px;border:1.5px solid #E2E8F0;
+      background:#fff;color:#4A5568;font-size:13px;font-weight:600;
+      cursor:pointer;transition:all .15s;-webkit-tap-highlight-color:transparent;}
+.pill:hover{border-color:#00A878;color:#047857;}
+.pill.active{background:#ECFDF5;border-color:#00A878;color:#065F46;font-weight:700;}
+
+/* Condition grid */
+.cond-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px;}
+.cond-btn{padding:10px 12px;border-radius:12px;border:1.5px solid #E2E8F0;
+          background:#fff;color:#1A202C;font-size:13px;font-weight:500;
+          text-align:left;cursor:pointer;transition:all .15s;
+          -webkit-tap-highlight-color:transparent;}
+.cond-btn:hover{border-color:#00A878;}
+.cond-btn.active{background:#ECFDF5;border-color:#00A878;
+                 color:#065F46;font-weight:700;}
+.cond-btn.hidden{opacity:0.35;pointer-events:none;}
+
+/* Label */
+.field-label{font-size:11px;font-weight:700;color:#6B7280;
+             text-transform:uppercase;letter-spacing:0.06em;
+             margin-bottom:5px;}
+
+/* Input */
+.field-input{width:100%;padding:10px 12px;border-radius:10px;
+             border:1.5px solid #E2E8F0;background:#F7F8FA;
+             color:#1A202C;font-size:13px;font-family:inherit;
+             outline:none;transition:border .15s;}
+.field-input:focus{border-color:#00A878;background:#fff;}
+.field-input::placeholder{color:#94A3B8;}
+
+/* Accordion */
+.accordion-toggle{width:100%;padding:10px 12px;border-radius:10px;
+                  border:1.5px solid #E2E8F0;background:#F7F8FA;
+                  color:#1A202C;font-size:13px;font-weight:600;
+                  text-align:left;cursor:pointer;display:flex;
+                  justify-content:space-between;align-items:center;
+                  margin-bottom:8px;transition:all .15s;}
+.accordion-toggle:hover{border-color:#00A878;}
+.accordion-body{display:none;}
+.accordion-body.open{display:block;}
+
+/* Upload area */
+.upload-area{border:2px dashed #B2F5EA;border-radius:14px;
+             padding:20px;text-align:center;background:#F8FFFD;
+             cursor:pointer;transition:all .15s;margin-bottom:10px;}
+.upload-area:hover,.upload-area.dragover{border-color:#00A878;background:#ECFDF5;}
+.upload-area.has-image{border-style:solid;border-color:#00A878;}
+.upload-preview{max-width:100%;max-height:180px;border-radius:8px;
+                object-fit:contain;display:none;}
+.upload-placeholder{color:#6B7280;font-size:13px;}
+.upload-icon{font-size:28px;margin-bottom:6px;}
+
+/* Buttons */
+.btn-scan{width:100%;padding:10px;border-radius:999px;
+          border:1.5px solid #00A878;background:#fff;
+          color:#00A878;font-size:13px;font-weight:600;
+          cursor:pointer;transition:all .15s;margin-bottom:8px;}
+.btn-scan:hover{background:#ECFDF5;}
+.btn-scan:disabled{opacity:0.5;cursor:not-allowed;}
+.btn-generate{width:100%;padding:14px;border-radius:999px;border:none;
+              background:linear-gradient(135deg,#00A878,#047857);
+              color:#fff;font-size:15px;font-weight:700;cursor:pointer;
+              transition:opacity .15s;margin-top:4px;
+              box-shadow:0 4px 14px rgba(0,168,120,0.25);}
+.btn-generate:hover{opacity:0.92;}
+.btn-generate:disabled{opacity:0.5;cursor:not-allowed;}
+
+/* Status */
+.status{border-radius:10px;padding:10px 14px;font-size:13px;
+        line-height:1.5;margin:6px 0;display:none;}
+.status.show{display:block;}
+.status.success{background:#ECFDF5;border:1px solid #A7F3D0;color:#065F46;}
+.status.warning{background:#FFFBEB;border:1px solid #FCD34D;color:#92400E;}
+.status.error{background:#FEF2F2;border:1px solid #FCA5A5;color:#991B1B;}
+.status.info{background:#EFF6FF;border:1px solid #BFDBFE;color:#1E40AF;}
+
+/* Output */
+.output-empty{text-align:center;padding:2.5rem 1rem;background:#fff;
+              border-radius:16px;border:1.5px dashed #E2E8F0;color:#94A3B8;}
+.output-loading{text-align:center;padding:2.5rem 1rem;background:#fff;
+                border-radius:16px;border:1px solid #E2E8F0;}
+.spinner{width:34px;height:34px;border:3px solid #D1FAE5;
+         border-top-color:#00A878;border-radius:50%;
+         margin:0 auto 12px;animation:spin .9s linear infinite;}
+@keyframes spin{to{transform:rotate(360deg);}}
+
+/* Tip */
+.tip{font-size:11px;color:#6B7280;background:#F7F8FA;
+     border-radius:10px;padding:8px 10px;margin-top:6px;line-height:1.6;}
+.tip strong{color:#047857;}
+
+/* Footer */
+.footer{text-align:center;padding:16px 0 4px;
+        font-size:10px;color:#9CA3AF;line-height:1.7;}
+.footer a{color:#00A878;text-decoration:none;font-weight:600;}
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- Header -->
+  <div class="header">
+    <div class="header-icon">💊</div>
+    <div class="header-title">Legimed</div>
+    <div class="header-sub">Turn any medicine into a clear,<br>personalised patient guide.</div>
+  </div>
+
+  <!-- Step 1: Profile -->
+  <div class="step-hdr">
+    <div class="step-num">1</div>
+    <div>
+      <div class="step-title">Your health profile</div>
+      <div class="step-sub">Used to prioritise warnings. Nothing is stored.</div>
+    </div>
+  </div>
+  <div class="card">
+    <div class="field-label">Age group</div>
+    <div class="pill-group" id="age-group">
+      <button class="pill" onclick="setAge('child')">Child</button>
+      <button class="pill active" onclick="setAge('adult')">Adult</button>
+      <button class="pill" onclick="setAge('elderly')">Elderly</button>
+    </div>
+    <div class="field-label">Sex</div>
+    <div class="pill-group" id="sex-group">
+      <button class="pill active" onclick="setSex('male')">Male</button>
+      <button class="pill" onclick="setSex('female')">Female</button>
+      <button class="pill" onclick="setSex('prefer_not_to_say')">Not specified</button>
+    </div>
+
+    <button class="accordion-toggle" onclick="toggleAccordion()">
+      <span>Medical conditions</span>
+      <span id="accordion-icon">▼</span>
+    </button>
+    <div class="accordion-body" id="accordion-body">
+      <div class="cond-grid">
+        <button class="cond-btn hidden" id="btn-pregnant"
+          onclick="toggleCond(this,'pregnant')">🤰 Pregnant</button>
+        <button class="cond-btn hidden" id="btn-breastfeeding"
+          onclick="toggleCond(this,'breastfeeding')">🍼 Breastfeeding</button>
+        <button class="cond-btn"
+          onclick="toggleCond(this,'heart_condition')">❤️ Heart disease</button>
+        <button class="cond-btn"
+          onclick="toggleCond(this,'diabetes')">🩸 Diabetes</button>
+        <button class="cond-btn"
+          onclick="toggleCond(this,'hypertension')">💉 Hypertension</button>
+        <button class="cond-btn"
+          onclick="toggleCond(this,'asthma')">🫁 Asthma</button>
+        <button class="cond-btn"
+          onclick="toggleCond(this,'kidney_issue')">🫘 Kidney</button>
+        <button class="cond-btn"
+          onclick="toggleCond(this,'liver_issue')">🫀 Liver</button>
+      </div>
+      <div class="field-label">Other conditions</div>
+      <input class="field-input" id="other-conditions" type="text"
+        placeholder="e.g. G6PD deficiency, thyroid disorder"
+        style="margin-bottom:10px;" oninput="sync()"/>
+    </div>
+
+    <div class="field-label" style="margin-top:4px;">Known allergies</div>
+    <input class="field-input" id="allergies" type="text"
+      placeholder="e.g. penicillin, sulfa, aspirin"
+      style="margin-bottom:10px;" oninput="sync()"/>
+    <div class="field-label">Current medications</div>
+    <input class="field-input" id="other-medications" type="text"
+      placeholder="e.g. aspirin, metformin, lisinopril" oninput="sync()"/>
+  </div>
+
+  <!-- Step 2: Medication -->
+  <div class="step-hdr">
+    <div class="step-num">2</div>
+    <div>
+      <div class="step-title">Your medication</div>
+      <div class="step-sub">Scan the box or type the medicine name.</div>
+    </div>
+  </div>
+  <div class="card">
+    <div class="upload-area" id="upload-area"
+      onclick="document.getElementById('file-input').click()"
+      ondragover="event.preventDefault();this.classList.add('dragover')"
+      ondragleave="this.classList.remove('dragover')"
+      ondrop="handleDrop(event)">
+      <img id="upload-preview" class="upload-preview" src="" alt="preview"/>
+      <div id="upload-placeholder" class="upload-placeholder">
+        <div class="upload-icon">📷</div>
+        <div>Tap to upload photo or drag & drop</div>
+        <div style="font-size:11px;color:#94A3B8;margin-top:4px;">JPG · PNG · WEBP</div>
+      </div>
+    </div>
+    <input type="file" id="file-input" accept="image/*"
+      style="display:none;" onchange="handleFile(this)"/>
+    <button class="btn-scan" id="scan-btn" onclick="doScan()" disabled>
+      🔍 Scan image</button>
+    <div class="status" id="scan-status"></div>
+    <div class="field-label" style="margin-top:6px;">Medicine name</div>
+    <input class="field-input" id="drug-name" type="text"
+      placeholder="Auto-filled after scan, or type here" oninput="sync()"/>
+    <div class="tip">
+      💡 DailyMed works best with generic names.
+      Try <strong>paracetamol</strong> instead of Panadol,
+      or <strong>ibuprofen</strong> instead of Advil.
+    </div>
+  </div>
+
+  <!-- Step 3: Generate -->
+  <div class="step-hdr">
+    <div class="step-num">3</div>
+    <div>
+      <div class="step-title">Generate your guide</div>
+      <div class="step-sub">Review the medicine name, then tap the button.</div>
+    </div>
+  </div>
+  <button class="btn-generate" id="gen-btn" onclick="doGenerate()">
+    Generate my guide →</button>
+
+  <div style="font-size:13px;font-weight:700;color:#1A202C;margin:16px 0 8px;">
+    Your guide</div>
+  <div id="output">
+    <div class="output-empty">
+      <div style="font-size:32px;margin-bottom:8px;">🧾</div>
+      <div style="font-size:15px;font-weight:700;color:#1A202C;margin-bottom:6px;">
+        Your guide will appear here</div>
+      <div style="font-size:13px;line-height:1.6;">
+        Fill in your profile and medicine name, then tap Generate.</div>
+    </div>
+  </div>
+
+  <div class="footer">
+    Gemma 4 · NIH DailyMed · Apache 2.0 ·
+    <a href="https://github.com/LorraineWong/legimed">GitHub</a><br>
+    For reference only. Always consult a healthcare professional.
+  </div>
+
+</div>
+
+<script>
+// ── State ────────────────────────────────────────────────────────────────────
+var state = {
+  age_group: "adult",
+  sex: "male",
+  pregnant: false, breastfeeding: false,
+  heart_condition: false, diabetes: false,
+  hypertension: false, asthma: false,
+  kidney_issue: false, liver_issue: false,
+  other_conditions: "", allergies: "", other_medications: "",
+  drug_name: "", img_b64: ""
+};
+
+// ── Profile controls ─────────────────────────────────────────────────────────
+function setAge(v) {
+  state.age_group = v;
+  document.querySelectorAll('#age-group .pill').forEach(function(b) {
+    b.classList.toggle('active', b.textContent.trim().toLowerCase() === v);
+  });
+}
+
+function setSex(v) {
+  state.sex = v;
+  document.querySelectorAll('#sex-group .pill').forEach(function(b) {
+    var map = {male:'male', female:'female', 'not specified':'prefer_not_to_say'};
+    b.classList.toggle('active', map[b.textContent.trim().toLowerCase()] === v);
+  });
+  var female = v === 'female';
+  ['btn-pregnant','btn-breastfeeding'].forEach(function(id) {
+    var b = document.getElementById(id);
+    if (b) b.classList.toggle('hidden', !female);
+  });
+  if (!female) { state.pregnant = false; state.breastfeeding = false; }
+}
+
+function toggleCond(btn, key) {
+  state[key] = !state[key];
+  btn.classList.toggle('active', state[key]);
+}
+
+function toggleAccordion() {
+  var body = document.getElementById('accordion-body');
+  var icon = document.getElementById('accordion-icon');
+  var open = body.classList.toggle('open');
+  icon.textContent = open ? '▲' : '▼';
+}
+
+function sync() {
+  state.other_conditions = val('other-conditions');
+  state.allergies = val('allergies');
+  state.other_medications = val('other-medications');
+  state.drug_name = val('drug-name');
+}
+
+function val(id) {
+  var el = document.getElementById(id);
+  return el ? el.value : '';
+}
+
+// ── Image upload ──────────────────────────────────────────────────────────────
+function handleFile(input) {
+  var file = input.files[0];
+  if (!file) return;
+  readFile(file);
+}
+
+function handleDrop(event) {
+  event.preventDefault();
+  document.getElementById('upload-area').classList.remove('dragover');
+  var file = event.dataTransfer.files[0];
+  if (file) readFile(file);
+}
+
+function readFile(file) {
+  var reader = new FileReader();
+  reader.onload = function(e) {
+    var dataUrl = e.target.result;
+    state.img_b64 = dataUrl.split(',')[1];
+    var preview = document.getElementById('upload-preview');
+    var placeholder = document.getElementById('upload-placeholder');
+    var area = document.getElementById('upload-area');
+    preview.src = dataUrl;
+    preview.style.display = 'block';
+    placeholder.style.display = 'none';
+    area.classList.add('has-image');
+    document.getElementById('scan-btn').disabled = false;
+  };
+  reader.readAsDataURL(file);
+}
+
+// ── Scan ──────────────────────────────────────────────────────────────────────
+function showStatus(id, type, msg) {
+  var el = document.getElementById(id);
+  el.className = 'status show ' + type;
+  el.innerHTML = msg;
+}
+
+function doScan() {
+  if (!state.img_b64) return;
+  var btn = document.getElementById('scan-btn');
+  btn.disabled = true;
+  btn.textContent = '⏳ Scanning…';
+  showStatus('scan-status', 'info', 'ℹ️ Scanning image with Gemma 4…');
+
+  fetch('/scan', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({image_b64: state.img_b64})
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(data) {
+    btn.disabled = false;
+    btn.textContent = '🔍 Scan image';
+    if (data.ok && data.drug_name) {
+      document.getElementById('drug-name').value = data.drug_name;
+      state.drug_name = data.drug_name;
+      showStatus('scan-status', 'success',
+        '✅ Detected: <strong>' + data.drug_name + '</strong> ' +
+        '<span style="font-size:11px;color:#6B7280;">(via ' + data.method + ')</span><br>' +
+        '<span style="font-size:11px;">Edit if needed, then click Generate.</span>');
+    } else {
+      showStatus('scan-status', 'warning',
+        '⚠️ Could not detect drug name. Please type it below.');
+    }
+  })
+  .catch(function(err) {
+    btn.disabled = false;
+    btn.textContent = '🔍 Scan image';
+    showStatus('scan-status', 'error', '❌ Scan error: ' + err.message);
+  });
+}
+
+// ── Generate ──────────────────────────────────────────────────────────────────
+function doGenerate() {
+  sync();
+  if (!state.drug_name.trim()) {
+    document.getElementById('output').innerHTML =
+      '<div style="background:#FEF2F2;border:1px solid #FCA5A5;border-radius:12px;' +
+      'padding:12px 14px;font-size:13px;color:#991B1B;">❌ Please enter a medicine name first.</div>';
+    return;
+  }
+
+  var btn = document.getElementById('gen-btn');
+  btn.disabled = true;
+  btn.textContent = '⏳ Generating…';
+  document.getElementById('output').innerHTML =
+    '<div class="output-loading">' +
+    '<div class="spinner"></div>' +
+    '<div style="font-size:13px;color:#00A878;font-weight:600;">Generating your guide…</div>' +
+    '<div style="font-size:12px;color:#6B7280;margin-top:4px;">About 45 seconds</div>' +
+    '</div>';
+
+  fetch('/generate', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({
+      drug_name: state.drug_name,
+      age_group: state.age_group,
+      sex: state.sex,
+      pregnant: state.pregnant,
+      breastfeeding: state.breastfeeding,
+      heart_condition: state.heart_condition,
+      diabetes: state.diabetes,
+      hypertension: state.hypertension,
+      asthma: state.asthma,
+      kidney_issue: state.kidney_issue,
+      liver_issue: state.liver_issue,
+      other_conditions: state.other_conditions,
+      allergies: state.allergies,
+      other_medications: state.other_medications
+    })
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(data) {
+    btn.disabled = false;
+    btn.textContent = 'Generate my guide →';
+    if (data.ok) {
+      document.getElementById('output').innerHTML = data.html;
+    } else {
+      document.getElementById('output').innerHTML =
+        '<div style="background:#FEF2F2;border:1px solid #FCA5A5;border-radius:12px;' +
+        'padding:12px 14px;font-size:13px;color:#991B1B;">⚠️ ' + data.error + '</div>';
+    }
+  })
+  .catch(function(err) {
+    btn.disabled = false;
+    btn.textContent = 'Generate my guide →';
+    document.getElementById('output').innerHTML =
+      '<div style="background:#FEF2F2;border:1px solid #FCA5A5;border-radius:12px;' +
+      'padding:12px 14px;font-size:13px;color:#991B1B;">❌ Error: ' + err.message + '</div>';
+  });
+}
+</script>
+</body>
+</html>
