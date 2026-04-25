@@ -136,6 +136,13 @@ demo = build_demo(model, tokenizer, processor)
 demo.launch()
 ```
 
+If you see `TypeError: build_demo() missing 1 required positional argument: 'processor'`, update your Colab launch cell to:
+
+```python
+demo = build_demo(model, tokenizer, processor)
+```
+
+
 ---
 
 ## Tech Stack

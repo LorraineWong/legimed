@@ -138,7 +138,7 @@ def format_html_output(drug_info, personal_summary) -> str:
     return html
 
 
-def scan_image(pil_image, model, tokenizer, processor):
+def scan_image(pil_image, model, tokenizer, processor=None):
     """Step 1: scan image and return detected drug name only."""
     if pil_image is None:
         return "", "<div style='color:#991B1B;padding:1rem;'>No image provided.</div>"
@@ -154,11 +154,14 @@ def scan_image(pil_image, model, tokenizer, processor):
                 Check the name above — edit if needed, then click Generate.</span>
             </div>"""
         else:
-            return "", """
+            processor_hint = ""
+            if model is not None and tokenizer is not None and processor is None:
+                processor_hint = "Gemma vision processor not loaded; "
+            return "", f"""
             <div style='background:#FEF3C7;border:1px solid #FCD34D;border-radius:10px;
                         padding:12px 16px;font-size:13px;color:#92400E;'>
               ⚠️ Could not detect drug name from image.<br>
-              <span style='font-size:12px;'>Please type the drug name in the field below.</span>
+              <span style='font-size:12px;'>{processor_hint}please type the drug name in the field below.</span>
             </div>"""
     except Exception as e:
         return "", f"<div style='color:#991B1B;padding:1rem;'>Scan error: {str(e)}</div>"
@@ -195,8 +198,7 @@ def generate_guide(drug_name, age_group, pregnant,
         return f"<div style='color:#991B1B;padding:1rem;'>Error: {str(e)}</div>"
 
 
-def build_demo(model, tokenizer, processor):
-
+def build_demo(model, tokenizer, processor=None):
     tess_ok, tess_msg = tesseract_status()
     tess_badge = (
         f"<span style='color:#065F46;background:#D1FAE5;padding:3px 9px;"
