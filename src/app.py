@@ -1,8 +1,14 @@
+import html
+import json
+from typing import Any, Dict, List, Optional
+
 import gradio as gr
+
 from dailymed import get_drug_leaflet
 from personalise import personalise, generate_personal_summary
 from schema import UserProfile
 from vision import image_to_drug_name
+
 
 DRUG_KEYWORDS = {
     "drug", "drugs", "medication", "medications", "medicine", "medicines",
@@ -14,514 +20,777 @@ DRUG_KEYWORDS = {
 }
 
 
+DEFAULT_OUTPUT_HTML = """
+<div class="empty-state">
+  <div class="empty-icon">🧾</div>
+  <div class="empty-title">Your medication guide will appear here</div>
+  <div class="empty-copy">Enter a medicine name or scan a package, then generate a personalized guide.</div>
+</div>
+"""
+
+
+LOADING_HTML = """
+<div class="loading-card">
+  <div class="loading-spinner"></div>
+  <div class="loading-title">Generating your guide...</div>
+  <div class="loading-copy">This may take around 30–60 seconds on Colab.</div>
+</div>
+"""
+
+
+def _escape(value: Any) -> str:
+    """Escape user/model text before inserting it into HTML."""
+    if value is None:
+        return ""
+    return html.escape(str(value), quote=True)
+
+
 def _is_food(substance: str) -> bool:
     words = set(substance.lower().replace("-", " ").split())
     return not bool(words & DRUG_KEYWORDS)
 
 
-def _status_html(type_, msg):
+def _split_csv(value: Optional[str]) -> List[str]:
+    if not value:
+        return []
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
+def _status_html(type_: str, msg: str) -> str:
     styles = {
-        "success": ("background:#F0FDF4;border:1px solid #6EE7B7;color:#065F46;", "✅"),
-        "warning": ("background:#FEF3C7;border:1px solid #FCD34D;color:#92400E;", "⚠️"),
-        "error":   ("background:#FEF2F2;border:1px solid #FEB2B2;color:#9B2C2C;", "❌"),
+        "success": ("status-success", "✅"),
+        "warning": ("status-warning", "⚠️"),
+        "error": ("status-error", "❌"),
+        "info": ("status-info", "ℹ️"),
     }
-    style, icon = styles.get(type_, styles["error"])
-    return (f"<div style='{style}border-radius:10px;padding:10px 14px;"
-            f"font-size:13px;margin-top:6px;'>{icon} {msg}</div>")
+    class_name, icon = styles.get(type_, styles["error"])
+    return f'<div class="status-box {class_name}">{icon} {msg}</div>'
 
 
-def format_html_output(drug_info, personal_summary) -> str:
-    severity_border = {"HIGH": "#E53E3E", "MEDIUM": "#F6AD55", "LOW": "#38A169"}
-    severity_tag_bg = {"HIGH": "#FEE2E2", "MEDIUM": "#FFF7E6", "LOW": "#E6FFFA"}
-    severity_text   = {"HIGH": "#9B2C2C", "MEDIUM": "#B7791F", "LOW": "#276749"}
-    severity_tag    = {"HIGH": "🚨 Emergency", "MEDIUM": "📞 Call doctor", "LOW": "👁 Monitor"}
-    food_color = {"avoid": "#FEE2E2", "caution": "#FFF7E6", "ok": "#E6FFFA"}
-    food_text  = {"avoid": "#9B2C2C", "caution": "#B7791F", "ok": "#276749"}
-    food_icon  = {"avoid": "🚫", "caution": "⚠️", "ok": "✅"}
+def _safe_profile_from_inputs(
+    age_group: str,
+    sex: str,
+    pregnant: bool,
+    breastfeeding: bool,
+    heart_condition: bool,
+    diabetes: bool,
+    hypertension: bool,
+    asthma: bool,
+    kidney_issue: bool,
+    liver_issue: bool,
+    other_conditions: str,
+    allergies: str,
+    other_medications: str,
+) -> UserProfile:
+    """Build a validated UserProfile from Gradio inputs."""
+    is_female = sex == "female"
+    return UserProfile(
+        age_group=age_group or "adult",
+        sex=sex or "prefer_not_to_say",
+        pregnant=bool(pregnant) and is_female,
+        breastfeeding=bool(breastfeeding) and is_female,
+        heart_condition=bool(heart_condition),
+        diabetes=bool(diabetes),
+        hypertension=bool(hypertension),
+        asthma=bool(asthma),
+        kidney_issue=bool(kidney_issue),
+        liver_issue=bool(liver_issue),
+        other_conditions=other_conditions or "",
+        allergies=_split_csv(allergies),
+        other_medications=_split_csv(other_medications),
+    )
 
-    def card(content, extra=""):
-        return (f'<div style="background:#ffffff;border-radius:14px;'
-                f'box-shadow:0 1px 6px rgba(0,0,0,0.07);padding:14px 16px;'
-                f'margin-bottom:10px;{extra}">{content}</div>')
 
-    def slabel(t):
-        return (f'<div style="font-size:10px;font-weight:700;color:#00A878;'
-                f'text-transform:uppercase;letter-spacing:0.08em;'
-                f'margin-bottom:10px;">{t}</div>')
+def format_html_output(drug_info, personal_summary: str) -> str:
+    severity_border = {"HIGH": "#EF4444", "MEDIUM": "#F59E0B", "LOW": "#10B981"}
+    severity_tag_bg = {"HIGH": "#FEE2E2", "MEDIUM": "#FEF3C7", "LOW": "#D1FAE5"}
+    severity_text = {"HIGH": "#991B1B", "MEDIUM": "#92400E", "LOW": "#065F46"}
+    severity_tag = {"HIGH": "Emergency", "MEDIUM": "Call doctor", "LOW": "Monitor"}
+    food_class = {"avoid": "food-avoid", "caution": "food-caution", "ok": "food-ok"}
+    food_icon = {"avoid": "🚫", "caution": "⚠️", "ok": "✅"}
 
-    html = ('<div style="font-family:-apple-system,BlinkMacSystemFont,'
-            "'Segoe UI',sans-serif;background:#F7FAFC;padding:14px;"
-            'border-radius:16px;max-width:520px;margin:0 auto;color:#1A202C;">')
+    drug_name = _escape(getattr(drug_info, "drug_name", "Unknown medicine"))
+    active_ingredient = _escape(getattr(drug_info, "active_ingredient", ""))
+    drug_class = _escape(getattr(drug_info, "drug_class", ""))
 
-    html += (f'<div style="background:linear-gradient(135deg,#00A878,#00875F);'
-             f'border-radius:14px;padding:18px;margin-bottom:10px;color:#ffffff;">'
-             f'<div style="font-size:21px;font-weight:800;color:#ffffff;">'
-             f'{drug_info.drug_name}</div>'
-             f'<div style="font-size:12px;opacity:0.9;margin-top:4px;color:#ffffff;">'
-             f'{drug_info.active_ingredient}</div>'
-             f'<div style="display:inline-block;margin-top:8px;'
-             f'background:rgba(255,255,255,0.2);border:1px solid rgba(255,255,255,0.3);'
-             f'padding:3px 10px;border-radius:999px;font-size:11px;'
-             f'font-weight:600;color:#ffffff;">{drug_info.drug_class}</div></div>')
+    html_parts = [
+        '<div class="guide-shell">',
+        '<section class="guide-hero">',
+        '<div class="guide-kicker">Based on official drug label</div>',
+        f'<h2>{drug_name}</h2>',
+        f'<p>{active_ingredient}</p>',
+        f'<span>{drug_class}</span>' if drug_class else "",
+        '</section>',
+    ]
 
     if personal_summary:
-        html += card(
-            slabel("📋 Your Summary") +
-            f'<div style="font-size:13px;color:#1A202C;line-height:1.7;'
-            f'background:#F0FFF8;border-radius:10px;padding:12px;'
-            f'border-left:3px solid #00A878;">{personal_summary}</div>'
+        html_parts.append(
+            '<section class="guide-card summary-card">'
+            '<div class="section-label">📋 Your summary</div>'
+            f'<p>{_escape(personal_summary)}</p>'
+            '</section>'
         )
 
-    time_slots = {"morning": "🌅", "afternoon": "☀️", "evening": "🌆", "bedtime": "🌙"}
-    dose_map = {d.time_of_day: d for d in drug_info.dosage_instructions}
-    slots = '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;">'
-    for slot, icon in time_slots.items():
+    time_slots = {
+        "morning": ("🌅", "Morning"),
+        "afternoon": ("☀️", "Afternoon"),
+        "evening": ("🌆", "Evening"),
+        "bedtime": ("🌙", "Bedtime"),
+    }
+    dosage_instructions = getattr(drug_info, "dosage_instructions", []) or []
+    dose_map = {getattr(d, "time_of_day", ""): d for d in dosage_instructions}
+
+    slots_html = ['<div class="dose-grid">']
+    for slot, (icon, label) in time_slots.items():
         d = dose_map.get(slot)
         if d:
-            slots += (f'<div style="background:#E6FFFA;border:1px solid #8FDCC5;'
-                      f'border-radius:10px;padding:8px 4px;text-align:center;">'
-                      f'<div style="font-size:16px;">{icon}</div>'
-                      f'<div style="font-size:9px;color:#4A5568;margin-top:2px;">'
-                      f'{slot.capitalize()}</div>'
-                      f'<div style="font-size:11px;font-weight:800;color:#065F46;'
-                      f'margin-top:2px;">{d.amount if d.amount else "—"}</div>'
-                      f'<div style="font-size:9px;color:#4A5568;">'
-                      f'{"with food" if d.with_food else "no food"}</div></div>')
+            amount = _escape(getattr(d, "amount", "") or "—")
+            food_note = "With food" if getattr(d, "with_food", False) else "Food not specified"
+            slots_html.append(
+                '<div class="dose-card active">'
+                f'<div class="dose-icon">{icon}</div>'
+                f'<div class="dose-label">{label}</div>'
+                f'<div class="dose-amount">{amount}</div>'
+                f'<div class="dose-food">{food_note}</div>'
+                '</div>'
+            )
         else:
-            slots += (f'<div style="background:#EDF2F7;border-radius:10px;'
-                      f'padding:8px 4px;text-align:center;">'
-                      f'<div style="font-size:16px;opacity:0.2;">{icon}</div>'
-                      f'<div style="font-size:9px;color:#A0AEC0;margin-top:2px;">'
-                      f'{slot.capitalize()}</div>'
-                      f'<div style="font-size:12px;color:#A0AEC0;margin-top:2px;">—</div>'
-                      f'</div>')
-    slots += "</div>"
-    html += card(slabel("⏰ When to Take") + slots)
+            slots_html.append(
+                '<div class="dose-card muted">'
+                f'<div class="dose-icon">{icon}</div>'
+                f'<div class="dose-label">{label}</div>'
+                '<div class="dose-amount">—</div>'
+                '</div>'
+            )
+    slots_html.append('</div>')
+    html_parts.append(
+        '<section class="guide-card">'
+        '<div class="section-label">⏰ When to take</div>'
+        + "".join(slots_html) +
+        '</section>'
+    )
 
-    if drug_info.side_effects:
-        se_html = ""
-        sorted_se = sorted(
-            drug_info.side_effects[:6],
-            key=lambda x: {"HIGH": 0, "MEDIUM": 1, "LOW": 2}.get(x.severity, 3)
+    side_effects = getattr(drug_info, "side_effects", []) or []
+    if side_effects:
+        sorted_side_effects = sorted(
+            side_effects[:8],
+            key=lambda x: {"HIGH": 0, "MEDIUM": 1, "LOW": 2}.get(getattr(x, "severity", ""), 3),
         )
-        for se in sorted_se[:4]:
-            border = severity_border.get(se.severity, "#CBD5E0")
-            tc     = severity_text.get(se.severity, "#2D3748")
-            tag    = severity_tag.get(se.severity, "Monitor")
-            tag_bg = severity_tag_bg.get(se.severity, "#EDF2F7")
-            se_html += (f'<div style="display:flex;align-items:flex-start;gap:8px;'
-                        f'padding:9px 10px;border-radius:10px;'
-                        f'border-left:3px solid {border};'
-                        f'background:#FAFAFA;margin-bottom:6px;">'
-                        f'<div style="flex:1;">'
-                        f'<div style="font-size:12px;font-weight:700;color:#1A202C;">'
-                        f'{se.name}</div>'
-                        f'<div style="font-size:11px;color:{tc};line-height:1.5;'
-                        f'margin-top:1px;">{se.description}</div></div>'
-                        f'<div style="font-size:9px;padding:3px 7px;border-radius:999px;'
-                        f'background:{tag_bg};color:{tc};font-weight:700;'
-                        f'white-space:nowrap;flex-shrink:0;">{tag}</div></div>')
-        html += card(slabel("⚡ Side Effects") + se_html)
+        rows = []
+        for se in sorted_side_effects[:5]:
+            severity = getattr(se, "severity", "LOW") or "LOW"
+            border = severity_border.get(severity, "#CBD5E1")
+            tag_bg = severity_tag_bg.get(severity, "#F1F5F9")
+            tag_text = severity_text.get(severity, "#334155")
+            tag = severity_tag.get(severity, "Monitor")
+            rows.append(
+                f'<div class="effect-row" style="border-left-color:{border};">'
+                '<div class="effect-copy">'
+                f'<strong>{_escape(getattr(se, "name", "Side effect"))}</strong>'
+                f'<p>{_escape(getattr(se, "description", ""))}</p>'
+                '</div>'
+                f'<span style="background:{tag_bg};color:{tag_text};">{tag}</span>'
+                '</div>'
+            )
+        html_parts.append(
+            '<section class="guide-card">'
+            '<div class="section-label">⚡ Side effects</div>'
+            + "".join(rows) +
+            '</section>'
+        )
 
-    food_items = [fi for fi in drug_info.food_interactions if _is_food(fi.substance)]
+    food_items = [fi for fi in (getattr(drug_info, "food_interactions", []) or []) if _is_food(getattr(fi, "substance", ""))]
     if food_items:
-        fi_html = '<div style="display:flex;gap:6px;flex-wrap:wrap;">'
-        for fi in food_items:
-            bg   = food_color.get(fi.action, "#F4F7FB")
-            tc   = food_text.get(fi.action, "#1A202C")
-            icon = food_icon.get(fi.action, "")
-            fi_html += (f'<div style="display:flex;align-items:center;gap:4px;'
-                        f'padding:6px 10px;border-radius:999px;background:{bg};'
-                        f'font-size:12px;font-weight:600;color:{tc};"'
-                        f' title="{fi.reason}">{icon} {fi.substance}</div>')
-        fi_html += "</div>"
-        html += card(slabel("🍽 Food & Drink") + fi_html)
+        chips = ['<div class="food-chip-wrap">']
+        for fi in food_items[:8]:
+            action = getattr(fi, "action", "caution") or "caution"
+            chip_class = food_class.get(action, "food-caution")
+            icon = food_icon.get(action, "⚠️")
+            substance = _escape(getattr(fi, "substance", ""))
+            reason = _escape(getattr(fi, "reason", ""))
+            chips.append(f'<span class="food-chip {chip_class}" title="{reason}">{icon} {substance}</span>')
+        chips.append('</div>')
+        food_content = "".join(chips)
     else:
-        html += card(slabel("🍽 Food & Drink") +
-                     '<div style="font-size:12px;color:#718096;">'
-                     'No specific food interactions found.</div>')
+        food_content = '<p class="muted-copy">No specific food interactions found in the label.</p>'
+    html_parts.append(
+        '<section class="guide-card">'
+        '<div class="section-label">🍽 Food & drink</div>'
+        + food_content +
+        '</section>'
+    )
 
-    if drug_info.warnings:
-        w_html = ""
-        for w in drug_info.warnings[:3]:
-            text = w.text
-            if len(text) > 100:
-                text = text[:100].rsplit(" ", 1)[0].rstrip(".,;") + "…"
-            w_html += (f'<div style="font-size:12px;color:#744210;padding:4px 0;'
-                       f'border-bottom:1px solid #FDE68A;line-height:1.6;">• {text}</div>')
-        html += (f'<div style="background:#FFFBF0;border-left:3px solid #F6AD55;'
-                 f'border-radius:14px;box-shadow:0 1px 6px rgba(0,0,0,0.06);'
-                 f'padding:14px 16px;margin-bottom:10px;">'
-                 f'<div style="font-size:10px;font-weight:700;color:#B7791F;'
-                 f'text-transform:uppercase;letter-spacing:0.08em;margin-bottom:8px;">'
-                 f'⚠️ Warnings</div>{w_html}</div>')
+    warnings = getattr(drug_info, "warnings", []) or []
+    if warnings:
+        warning_rows = []
+        for w in warnings[:4]:
+            text = _escape(getattr(w, "text", ""))
+            if len(text) > 170:
+                text = text[:170].rsplit(" ", 1)[0].rstrip(".,;") + "…"
+            warning_rows.append(f'<li>{text}</li>')
+        html_parts.append(
+            '<section class="guide-card warning-card">'
+            '<div class="section-label amber">⚠️ Important warnings</div>'
+            f'<ul>{"".join(warning_rows)}</ul>'
+            '</section>'
+        )
 
-    if drug_info.emergency_signs:
-        e_html = ""
-        for e in drug_info.emergency_signs[:3]:
-            e_html += (f'<div style="font-size:12px;color:#7F1D1D;'
-                       f'padding:3px 0;line-height:1.6;">• {e}</div>')
-        html += (f'<div style="background:#FFF5F5;border:1px solid #FEB2B2;'
-                 f'border-radius:14px;box-shadow:0 1px 6px rgba(0,0,0,0.06);'
-                 f'padding:14px 16px;margin-bottom:10px;">'
-                 f'<div style="font-size:10px;font-weight:800;color:#C53030;'
-                 f'text-transform:uppercase;letter-spacing:0.08em;margin-bottom:8px;">'
-                 f'🚨 Seek Help Immediately If:</div>{e_html}</div>')
+    emergency_signs = getattr(drug_info, "emergency_signs", []) or []
+    if emergency_signs:
+        emergency_rows = [f'<li>{_escape(e)}</li>' for e in emergency_signs[:4]]
+        html_parts.append(
+            '<section class="guide-card emergency-card">'
+            '<div class="section-label red">🚨 Seek help immediately if</div>'
+            f'<ul>{"".join(emergency_rows)}</ul>'
+            '</section>'
+        )
 
-    html += ('<div style="text-align:center;padding-top:6px;">'
-             '<div style="font-size:10px;color:#A0AEC0;line-height:1.7;">'
-             'Powered by Gemma 4 · NIH DailyMed<br>'
-             'For reference only · Always consult your doctor or pharmacist'
-             '</div></div></div>')
-    return html
+    html_parts.append(
+        '<section class="guide-footer">'
+        'Powered by Gemma · NIH DailyMed<br>'
+        'For reference only. Always consult your doctor or pharmacist.'
+        '</section>'
+        '</div>'
+    )
+    return "".join(html_parts)
 
 
 def scan_image(pil_image, model, tokenizer, processor=None):
     if pil_image is None:
-        return "", _status_html("error", "No image provided.")
+        return gr.update(), _status_html("error", "Please upload or capture an image first.")
     try:
         drug_name, method = image_to_drug_name(pil_image, model, tokenizer, processor)
         if drug_name:
+            safe_drug_name = _escape(drug_name)
             return drug_name, _status_html(
                 "success",
-                f"Detected: <strong>{drug_name}</strong> "
-                f"<span style='font-size:11px;color:#718096;'>(via {method})</span><br>"
-                f"<span style='font-size:11px;'>Edit if needed, then click Generate.</span>")
-        else:
-            return "", _status_html("warning",
-                "Could not detect drug name. Please type it below.")
-    except Exception as e:
-        return "", _status_html("error", f"Scan error: {str(e)}")
+                f"Detected <strong>{safe_drug_name}</strong> "
+                f"<span class='status-muted'>(via {_escape(method)})</span><br>"
+                "Please confirm or edit the medicine name below."
+            )
+        return "", _status_html("warning", "I could not detect a medicine name. Please type it manually.")
+    except Exception as exc:
+        return gr.update(), _status_html("error", f"Scan error: {_escape(exc)}")
 
 
-def generate_guide(drug_name, profile_json, model, tokenizer):
-    import json
+def generate_guide(
+    drug_name: str,
+    age_group: str,
+    sex: str,
+    pregnant: bool,
+    breastfeeding: bool,
+    heart_condition: bool,
+    diabetes: bool,
+    hypertension: bool,
+    asthma: bool,
+    kidney_issue: bool,
+    liver_issue: bool,
+    other_conditions: str,
+    allergies: str,
+    other_medications: str,
+    model,
+    tokenizer,
+):
     from extract import extract_drug_info_robust
+
     try:
-        if not drug_name.strip():
-            return _status_html("error", "Please enter a drug name first.")
-        p = json.loads(profile_json)
-        leaflet_text = get_drug_leaflet(drug_name.strip())
-        if not leaflet_text:
-            return _status_html("warning",
-                f"'{drug_name}' not found in DailyMed. "
-                f"Try the generic name (e.g. paracetamol instead of Panadol).")
-        profile = UserProfile(
-            age_group=p.get("age_group", "adult"),
-            sex=p.get("sex", "prefer_not_to_say"),
-            pregnant=p.get("pregnant", False) and p.get("sex") == "female",
-            breastfeeding=p.get("breastfeeding", False) and p.get("sex") == "female",
-            heart_condition=p.get("heart_condition", False),
-            diabetes=p.get("diabetes", False),
-            hypertension=p.get("hypertension", False),
-            asthma=p.get("asthma", False),
-            kidney_issue=p.get("kidney_issue", False),
-            liver_issue=p.get("liver_issue", False),
-            allergies=[a.strip() for a in p.get("allergies", "").split(",") if a.strip()],
-            other_medications=[m.strip() for m in p.get("other_meds", "").split(",") if m.strip()]
+        clean_drug_name = (drug_name or "").strip()
+        if not clean_drug_name:
+            return _status_html("error", "Please enter a medicine name first.")
+
+        profile = _safe_profile_from_inputs(
+            age_group=age_group,
+            sex=sex,
+            pregnant=pregnant,
+            breastfeeding=breastfeeding,
+            heart_condition=heart_condition,
+            diabetes=diabetes,
+            hypertension=hypertension,
+            asthma=asthma,
+            kidney_issue=kidney_issue,
+            liver_issue=liver_issue,
+            other_conditions=other_conditions,
+            allergies=allergies,
+            other_medications=other_medications,
         )
+
+        leaflet_text = get_drug_leaflet(clean_drug_name)
+        if not leaflet_text:
+            return _status_html(
+                "warning",
+                f"'{_escape(clean_drug_name)}' was not found in DailyMed. "
+                "Try the generic name, for example paracetamol instead of Panadol."
+            )
+
         drug_info = extract_drug_info_robust(leaflet_text, model, tokenizer)
         drug_info = personalise(drug_info, profile)
         summary = generate_personal_summary(drug_info, profile)
         return format_html_output(drug_info, summary)
-    except Exception as e:
-        return _status_html("error", f"Error: {str(e)}")
+
+    except Exception as exc:
+        return _status_html("error", f"Error: {_escape(exc)}")
 
 
 def build_demo(model, tokenizer, processor=None):
-
     def _scan(pil_image):
         return scan_image(pil_image, model, tokenizer, processor)
 
-    def _generate(drug_name, profile_json):
-        return generate_guide(drug_name, profile_json, model, tokenizer)
+    def _generate(*args):
+        return generate_guide(*args, model=model, tokenizer=tokenizer)
 
-    CSS = """
-    * { box-sizing: border-box; }
-    body, .gradio-container, .main, .wrap, .app, .svelte-1gfkn6j {
-        background: #F7F8FA !important;
-        color: #1A202C !important;
+    css = """
+    :root {
+        color-scheme: light !important;
+        --legi-bg: #F6F8FB;
+        --legi-card: #FFFFFF;
+        --legi-text: #0F172A;
+        --legi-muted: #64748B;
+        --legi-border: #E2E8F0;
+        --legi-primary: #00A878;
+        --legi-primary-dark: #047857;
+        --legi-soft: #ECFDF5;
+        --legi-shadow: 0 18px 45px rgba(15, 23, 42, 0.08);
     }
+
+    html, body, .gradio-container, .main, .wrap, .app {
+        background: var(--legi-bg) !important;
+        color: var(--legi-text) !important;
+    }
+
     .gradio-container {
-        max-width: 520px !important;
-        min-width: 320px !important;
+        max-width: 980px !important;
         margin: 0 auto !important;
-        padding: 0 0 40px !important;
-        overflow-x: hidden !important;
+        padding: 22px 14px 44px !important;
+        font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
     }
-    footer { display: none !important; }
+
+    footer, .api-docs, .built-with { display: none !important; }
+
+    .legimed-hero {
+        background: radial-gradient(circle at top left, #D1FAE5 0, transparent 34%),
+                    linear-gradient(135deg, #FFFFFF 0%, #F8FAFC 100%);
+        border: 1px solid rgba(226, 232, 240, 0.9);
+        border-radius: 28px;
+        padding: 28px;
+        box-shadow: var(--legi-shadow);
+        margin-bottom: 18px;
+    }
+
+    .legimed-brand {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        padding: 7px 12px;
+        border-radius: 999px;
+        background: var(--legi-soft);
+        color: var(--legi-primary-dark);
+        font-weight: 750;
+        font-size: 13px;
+        margin-bottom: 14px;
+    }
+
+    .legimed-hero h1 {
+        margin: 0;
+        color: var(--legi-text);
+        font-size: clamp(30px, 5vw, 48px);
+        letter-spacing: -0.04em;
+        line-height: 1.02;
+    }
+
+    .legimed-hero p {
+        margin: 12px 0 0;
+        color: var(--legi-muted);
+        font-size: 15px;
+        line-height: 1.7;
+        max-width: 680px;
+    }
+
+    .step-card {
+        background: var(--legi-card) !important;
+        border: 1px solid var(--legi-border) !important;
+        border-radius: 22px !important;
+        padding: 18px !important;
+        box-shadow: 0 12px 30px rgba(15, 23, 42, 0.06) !important;
+        margin-bottom: 14px !important;
+    }
+
+    .step-heading {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 14px;
+    }
+
+    .step-num {
+        width: 28px;
+        height: 28px;
+        border-radius: 999px;
+        background: var(--legi-primary);
+        color: white;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        font-weight: 800;
+        font-size: 13px;
+    }
+
+    .step-heading strong {
+        color: var(--legi-text);
+        font-size: 15px;
+    }
+
+    .step-heading span {
+        display: block;
+        color: var(--legi-muted);
+        font-size: 12px;
+        margin-top: 2px;
+    }
+
+    .gradio-container label, .gradio-container .label-wrap span {
+        color: var(--legi-text) !important;
+        font-weight: 650 !important;
+    }
+
+    .gradio-container input,
+    .gradio-container textarea,
+    .gradio-container select,
+    .gradio-container .wrap-inner,
+    .gradio-container .input-container,
+    .gradio-container .container,
+    .gradio-container .block,
+    .gradio-container .form,
+    .gradio-container .panel {
+        background: #FFFFFF !important;
+        color: var(--legi-text) !important;
+        border-color: var(--legi-border) !important;
+    }
+
+    .gradio-container input::placeholder,
+    .gradio-container textarea::placeholder {
+        color: #94A3B8 !important;
+    }
+
+    .gradio-container .radio label,
+    .gradio-container .checkbox label,
+    .gradio-container .checkboxgroup label {
+        background: #FFFFFF !important;
+        color: var(--legi-text) !important;
+        border-color: var(--legi-border) !important;
+        border-radius: 14px !important;
+    }
+
+    .gradio-container button.primary,
+    .gradio-container .primary {
+        background: linear-gradient(135deg, #00A878, #047857) !important;
+        color: #FFFFFF !important;
+        border: none !important;
+        border-radius: 16px !important;
+        font-weight: 800 !important;
+        box-shadow: 0 14px 28px rgba(0, 168, 120, 0.24) !important;
+    }
+
+    .gradio-container button.secondary,
+    .gradio-container .secondary {
+        background: #F8FAFC !important;
+        color: var(--legi-text) !important;
+        border: 1px solid var(--legi-border) !important;
+        border-radius: 14px !important;
+        font-weight: 700 !important;
+    }
+
+    .helper-note {
+        color: var(--legi-muted);
+        font-size: 12px;
+        line-height: 1.6;
+        margin-top: 8px;
+    }
+
+    .status-box {
+        border-radius: 14px;
+        padding: 12px 14px;
+        font-size: 13px;
+        line-height: 1.55;
+        margin: 8px 0 4px;
+    }
+    .status-success { background:#ECFDF5; border:1px solid #A7F3D0; color:#065F46; }
+    .status-warning { background:#FFFBEB; border:1px solid #FCD34D; color:#92400E; }
+    .status-error { background:#FEF2F2; border:1px solid #FCA5A5; color:#991B1B; }
+    .status-info { background:#EFF6FF; border:1px solid #BFDBFE; color:#1E40AF; }
+    .status-muted { color:#64748B; font-size:12px; }
+
+    .empty-state, .loading-card {
+        background: #FFFFFF;
+        border: 1.5px dashed var(--legi-border);
+        border-radius: 22px;
+        padding: 42px 22px;
+        text-align: center;
+        color: var(--legi-muted);
+        box-shadow: 0 12px 30px rgba(15, 23, 42, 0.04);
+    }
+    .empty-icon { font-size: 34px; margin-bottom: 10px; }
+    .empty-title, .loading-title { color: var(--legi-text); font-size: 16px; font-weight: 800; margin-bottom: 6px; }
+    .empty-copy, .loading-copy { font-size: 13px; line-height: 1.6; }
+
+    .loading-spinner {
+        width: 34px;
+        height: 34px;
+        border: 3px solid #D1FAE5;
+        border-top-color: var(--legi-primary);
+        border-radius: 999px;
+        margin: 0 auto 14px;
+        animation: spin 0.9s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .guide-shell {
+        background: #F8FAFC;
+        border-radius: 24px;
+        padding: 12px;
+        color: var(--legi-text);
+    }
+    .guide-hero {
+        background: linear-gradient(135deg, #00A878, #047857);
+        border-radius: 22px;
+        padding: 22px;
+        color: #FFFFFF;
+        margin-bottom: 12px;
+    }
+    .guide-kicker { font-size: 11px; font-weight: 800; opacity: 0.85; text-transform: uppercase; letter-spacing: 0.08em; }
+    .guide-hero h2 { margin: 8px 0 4px; font-size: 28px; line-height: 1.1; letter-spacing: -0.03em; color: #FFFFFF; }
+    .guide-hero p { margin: 0; color: rgba(255,255,255,0.9); font-size: 13px; }
+    .guide-hero span { display: inline-block; margin-top: 12px; padding: 5px 10px; border-radius: 999px; background: rgba(255,255,255,0.16); border: 1px solid rgba(255,255,255,0.24); font-size: 12px; font-weight: 700; color: #FFFFFF; }
+
+    .guide-card {
+        background: #FFFFFF;
+        border: 1px solid #E2E8F0;
+        border-radius: 20px;
+        padding: 16px;
+        margin-bottom: 12px;
+        box-shadow: 0 10px 24px rgba(15, 23, 42, 0.05);
+    }
+    .section-label { color: #047857; text-transform: uppercase; letter-spacing: 0.08em; font-size: 11px; font-weight: 850; margin-bottom: 12px; }
+    .section-label.amber { color: #B45309; }
+    .section-label.red { color: #B91C1C; }
+    .summary-card p { margin: 0; color: #0F172A; line-height: 1.75; font-size: 14px; }
+
+    .dose-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+    .dose-card { border-radius: 16px; padding: 12px 8px; text-align: center; border: 1px solid #E2E8F0; }
+    .dose-card.active { background: #ECFDF5; border-color: #A7F3D0; }
+    .dose-card.muted { background: #F8FAFC; color: #94A3B8; }
+    .dose-icon { font-size: 20px; margin-bottom: 4px; }
+    .dose-label { font-size: 11px; color: #64748B; }
+    .dose-amount { margin-top: 4px; color: #064E3B; font-size: 13px; font-weight: 850; }
+    .dose-food { margin-top: 2px; color: #64748B; font-size: 10px; }
+
+    .effect-row {
+        display: flex;
+        gap: 10px;
+        align-items: flex-start;
+        background: #F8FAFC;
+        border-left: 4px solid #CBD5E1;
+        border-radius: 14px;
+        padding: 12px;
+        margin-bottom: 8px;
+    }
+    .effect-copy { flex: 1; min-width: 0; }
+    .effect-copy strong { color: #0F172A; font-size: 13px; }
+    .effect-copy p { color: #475569; font-size: 12px; line-height: 1.55; margin: 3px 0 0; }
+    .effect-row span { flex-shrink: 0; border-radius: 999px; padding: 4px 8px; font-size: 10px; font-weight: 850; white-space: nowrap; }
+
+    .food-chip-wrap { display: flex; flex-wrap: wrap; gap: 8px; }
+    .food-chip { display: inline-flex; align-items: center; gap: 4px; padding: 7px 10px; border-radius: 999px; font-size: 12px; font-weight: 750; }
+    .food-avoid { background: #FEE2E2; color: #991B1B; }
+    .food-caution { background: #FEF3C7; color: #92400E; }
+    .food-ok { background: #D1FAE5; color: #065F46; }
+    .muted-copy { color: #64748B; font-size: 13px; margin: 0; }
+
+    .warning-card { background: #FFFBEB; border-color: #FDE68A; }
+    .emergency-card { background: #FEF2F2; border-color: #FCA5A5; }
+    .guide-card ul { margin: 0; padding-left: 18px; }
+    .guide-card li { color: #334155; line-height: 1.65; font-size: 13px; margin-bottom: 5px; }
+    .emergency-card li { color: #7F1D1D; }
+    .warning-card li { color: #78350F; }
+    .guide-footer { color: #94A3B8; font-size: 11px; line-height: 1.7; text-align: center; padding: 8px 4px 2px; }
+
+    @media (max-width: 720px) {
+        .legimed-hero { padding: 22px; border-radius: 22px; }
+        .dose-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
     """
 
-    FORM_HTML = """
-<div id="legimed-app" style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
-     background:#F7F8FA;max-width:520px;margin:0 auto;padding:0 12px 16px;color:#1A202C;">
-
-  <!-- Header -->
-  <div style="text-align:center;padding:20px 0 8px;">
-    <div style="font-size:34px;">💊</div>
-    <div style="font-size:26px;font-weight:800;color:#1A202C;margin-top:2px;">Legimed</div>
-    <div style="font-size:13px;color:#718096;margin-top:4px;">Your medication, made legible</div>
-  </div>
-
-  <!-- Step 1 -->
-  <div style="display:flex;align-items:center;gap:8px;margin:14px 0 8px;">
-    <div style="width:22px;height:22px;border-radius:50%;background:#00A878;color:#fff;
-         font-size:11px;font-weight:800;display:flex;align-items:center;
-         justify-content:center;">1</div>
-    <div style="font-size:13px;font-weight:700;color:#1A202C;">Your health profile</div>
-  </div>
-
-  <div style="background:#ffffff;border-radius:14px;border:1px solid #E2E8F0;padding:14px 16px;">
-
-    <!-- Age group -->
-    <div style="font-size:11px;font-weight:600;color:#718096;margin-bottom:6px;">Age group</div>
-    <div style="display:flex;gap:6px;margin-bottom:12px;">
-      <button onclick="setAge('child')" id="age-child"
-        style="flex:1;padding:8px;border-radius:999px;border:1.5px solid #E2E8F0;
-               background:#fff;color:#4A5568;font-size:12px;font-weight:600;cursor:pointer;">
-        Child</button>
-      <button onclick="setAge('adult')" id="age-adult"
-        style="flex:1;padding:8px;border-radius:999px;border:1.5px solid #00A878;
-               background:#E6FFFA;color:#065F46;font-size:12px;font-weight:700;cursor:pointer;">
-        Adult</button>
-      <button onclick="setAge('elderly')" id="age-elderly"
-        style="flex:1;padding:8px;border-radius:999px;border:1.5px solid #E2E8F0;
-               background:#fff;color:#4A5568;font-size:12px;font-weight:600;cursor:pointer;">
-        Elderly</button>
-    </div>
-
-    <!-- Sex -->
-    <div style="font-size:11px;font-weight:600;color:#718096;margin-bottom:6px;">Sex</div>
-    <div style="display:flex;gap:6px;margin-bottom:12px;">
-      <button onclick="setSex('male')" id="sex-male"
-        style="flex:1;padding:8px;border-radius:999px;border:1.5px solid #00A878;
-               background:#E6FFFA;color:#065F46;font-size:12px;font-weight:700;cursor:pointer;">
-        Male</button>
-      <button onclick="setSex('female')" id="sex-female"
-        style="flex:1;padding:8px;border-radius:999px;border:1.5px solid #E2E8F0;
-               background:#fff;color:#4A5568;font-size:12px;font-weight:600;cursor:pointer;">
-        Female</button>
-    </div>
-
-    <!-- Conditions -->
-    <div style="font-size:11px;font-weight:600;color:#718096;margin-bottom:8px;">
-      Chronic conditions</div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:12px;">
-      <button onclick="toggleCond(this,'heart_condition')"
-        style="padding:9px 10px;border-radius:10px;border:1.5px solid #E2E8F0;
-               background:#fff;color:#1A202C;font-size:12px;font-weight:500;
-               text-align:left;cursor:pointer;">❤️ Heart disease</button>
-      <button onclick="toggleCond(this,'diabetes')"
-        style="padding:9px 10px;border-radius:10px;border:1.5px solid #E2E8F0;
-               background:#fff;color:#1A202C;font-size:12px;font-weight:500;
-               text-align:left;cursor:pointer;">🩸 Diabetes</button>
-      <button onclick="toggleCond(this,'hypertension')"
-        style="padding:9px 10px;border-radius:10px;border:1.5px solid #E2E8F0;
-               background:#fff;color:#1A202C;font-size:12px;font-weight:500;
-               text-align:left;cursor:pointer;">💉 Hypertension</button>
-      <button onclick="toggleCond(this,'asthma')"
-        style="padding:9px 10px;border-radius:10px;border:1.5px solid #E2E8F0;
-               background:#fff;color:#1A202C;font-size:12px;font-weight:500;
-               text-align:left;cursor:pointer;">🫁 Asthma</button>
-      <button onclick="toggleCond(this,'kidney_issue')"
-        style="padding:9px 10px;border-radius:10px;border:1.5px solid #E2E8F0;
-               background:#fff;color:#1A202C;font-size:12px;font-weight:500;
-               text-align:left;cursor:pointer;">🫘 Kidney</button>
-      <button onclick="toggleCond(this,'liver_issue')"
-        style="padding:9px 10px;border-radius:10px;border:1.5px solid #E2E8F0;
-               background:#fff;color:#1A202C;font-size:12px;font-weight:500;
-               text-align:left;cursor:pointer;">🫀 Liver</button>
-      <button onclick="toggleCond(this,'pregnant')" id="btn-pregnant"
-        style="padding:9px 10px;border-radius:10px;border:1.5px solid #E2E8F0;
-               background:#fff;color:#1A202C;font-size:12px;font-weight:500;
-               text-align:left;cursor:pointer;">🤰 Pregnant</button>
-      <button onclick="toggleCond(this,'breastfeeding')" id="btn-breastfeeding"
-        style="padding:9px 10px;border-radius:10px;border:1.5px solid #E2E8F0;
-               background:#fff;color:#1A202C;font-size:12px;font-weight:500;
-               text-align:left;cursor:pointer;">🍼 Breastfeeding</button>
-    </div>
-
-    <!-- Allergies -->
-    <div style="font-size:11px;font-weight:600;color:#718096;margin-bottom:4px;">
-      ⚠️ Known allergies</div>
-    <input id="input-allergies" type="text"
-      placeholder="e.g. penicillin, sulfa, aspirin"
-      style="width:100%;padding:9px 12px;border-radius:10px;
-             border:1.5px solid #E2E8F0;background:#F7F8FA;
-             color:#1A202C;font-size:13px;margin-bottom:10px;outline:none;"
-      oninput="updateProfile()"/>
-
-    <!-- Current meds -->
-    <div style="font-size:11px;font-weight:600;color:#718096;margin-bottom:4px;">
-      💊 Current medications</div>
-    <input id="input-meds" type="text"
-      placeholder="e.g. aspirin, metformin, lisinopril"
-      style="width:100%;padding:9px 12px;border-radius:10px;
-             border:1.5px solid #E2E8F0;background:#F7F8FA;
-             color:#1A202C;font-size:13px;outline:none;"
-      oninput="updateProfile()"/>
-  </div>
-
-  <!-- Step 2 label -->
-  <div style="display:flex;align-items:center;gap:8px;margin:14px 0 8px;">
-    <div style="width:22px;height:22px;border-radius:50%;background:#00A878;color:#fff;
-         font-size:11px;font-weight:800;display:flex;align-items:center;
-         justify-content:center;">2</div>
-    <div style="font-size:13px;font-weight:700;color:#1A202C;">Your medication</div>
-  </div>
-</div>
-
-<script>
-var profile = {
-  age_group: "adult", sex: "male",
-  heart_condition:false, diabetes:false, hypertension:false, asthma:false,
-  kidney_issue:false, liver_issue:false, pregnant:false, breastfeeding:false,
-  allergies:"", other_meds:""
-};
-
-function setAge(v) {
-  profile.age_group = v;
-  ["child","adult","elderly"].forEach(function(a) {
-    var b = document.getElementById("age-"+a);
-    if (!b) return;
-    if (a === v) {
-      b.style.background="#E6FFFA"; b.style.borderColor="#00A878";
-      b.style.color="#065F46"; b.style.fontWeight="700";
-    } else {
-      b.style.background="#fff"; b.style.borderColor="#E2E8F0";
-      b.style.color="#4A5568"; b.style.fontWeight="600";
-    }
-  });
-  updateProfile();
-}
-
-function setSex(v) {
-  profile.sex = v;
-  ["male","female"].forEach(function(s) {
-    var b = document.getElementById("sex-"+s);
-    if (!b) return;
-    if (s === v) {
-      b.style.background="#E6FFFA"; b.style.borderColor="#00A878";
-      b.style.color="#065F46"; b.style.fontWeight="700";
-    } else {
-      b.style.background="#fff"; b.style.borderColor="#E2E8F0";
-      b.style.color="#4A5568"; b.style.fontWeight="600";
-    }
-  });
-  var show = v === "female";
-  var pb = document.getElementById("btn-pregnant");
-  var bb = document.getElementById("btn-breastfeeding");
-  if (pb) pb.style.opacity = show ? "1" : "0.3";
-  if (bb) bb.style.opacity = show ? "1" : "0.3";
-  updateProfile();
-}
-
-function toggleCond(btn, key) {
-  profile[key] = !profile[key];
-  if (profile[key]) {
-    btn.style.background="#E6FFFA"; btn.style.borderColor="#00A878";
-    btn.style.color="#065F46"; btn.style.fontWeight="700";
-  } else {
-    btn.style.background="#fff"; btn.style.borderColor="#E2E8F0";
-    btn.style.color="#1A202C"; btn.style.fontWeight="500";
-  }
-  updateProfile();
-}
-
-function updateProfile() {
-  var a = document.getElementById("input-allergies");
-  var m = document.getElementById("input-meds");
-  if (a) profile.allergies = a.value;
-  if (m) profile.other_meds = m.value;
-  var el = document.getElementById("profile-state");
-  if (el) el.value = JSON.stringify(profile);
-  // Trigger Gradio change event
-  var event = new Event("input", {bubbles:true});
-  if (el) el.dispatchEvent(event);
-}
-
-// Init
-document.addEventListener("DOMContentLoaded", function() { updateProfile(); });
-setTimeout(function() { updateProfile(); }, 500);
-</script>
-"""
-
-    with gr.Blocks(title="Legimed", css=CSS) as demo:
-
-        gr.HTML(FORM_HTML)
-
-        # Hidden state for profile JSON
-        profile_state = gr.Textbox(
-            value='{"age_group":"adult","sex":"male"}',
-            visible=False,
-            elem_id="profile-state"
+    with gr.Blocks(title="Legimed", css=css, theme=gr.themes.Soft(primary_hue="green", neutral_hue="slate")) as demo:
+        gr.HTML(
+            """
+            <header class="legimed-hero">
+              <div class="legimed-brand">💊 Legimed</div>
+              <h1>Your medication, made legible.</h1>
+              <p>
+                Scan a medicine package or enter a drug name. Legimed uses NIH DailyMed and Gemma
+                to turn official drug labels into a clearer, personalized patient guide.
+              </p>
+            </header>
+            """
         )
 
-        # Image + scan (Gradio handles file upload)
-        with gr.Group():
-            image_input = gr.Image(
-                type="pil",
-                label="📷 Scan medicine box (optional)",
-                sources=["upload", "webcam", "clipboard"],
-                height=180,
-            )
-            scan_btn    = gr.Button("🔍 Scan image", variant="secondary", size="sm")
-            scan_status = gr.HTML(value="")
-            drug_input  = gr.Textbox(
-                label="💊 Drug name",
-                placeholder="Auto-filled after scan, or type here",
-            )
+        with gr.Row(equal_height=False):
+            with gr.Column(scale=5, min_width=320):
+                with gr.Group(elem_classes=["step-card"]):
+                    gr.HTML(
+                        """
+                        <div class="step-heading">
+                          <div class="step-num">1</div>
+                          <div><strong>Health profile</strong><span>Used to prioritize warnings. Nothing is stored.</span></div>
+                        </div>
+                        """
+                    )
+                    with gr.Row():
+                        age_group = gr.Radio(
+                            choices=[("Child", "child"), ("Adult", "adult"), ("Elderly", "elderly")],
+                            value="adult",
+                            label="Age group",
+                        )
+                        sex = gr.Radio(
+                            choices=[("Male", "male"), ("Female", "female"), ("Prefer not to say", "prefer_not_to_say")],
+                            value="prefer_not_to_say",
+                            label="Sex",
+                        )
 
-        gr.HTML("""
-        <div style="display:flex;align-items:center;gap:8px;margin:14px 0 8px;
-                    padding:0 12px;">
-          <div style="width:22px;height:22px;border-radius:50%;background:#00A878;
-               color:#fff;font-size:11px;font-weight:800;display:flex;
-               align-items:center;justify-content:center;">3</div>
-          <div style="font-size:13px;font-weight:700;color:#1A202C;">
-            Generate your guide</div>
-        </div>""")
+                    with gr.Accordion("Medical conditions", open=True):
+                        with gr.Row():
+                            pregnant = gr.Checkbox(label="Pregnant", value=False)
+                            breastfeeding = gr.Checkbox(label="Breastfeeding", value=False)
+                        with gr.Row():
+                            heart_condition = gr.Checkbox(label="Heart condition", value=False)
+                            diabetes = gr.Checkbox(label="Diabetes", value=False)
+                        with gr.Row():
+                            hypertension = gr.Checkbox(label="Hypertension", value=False)
+                            asthma = gr.Checkbox(label="Asthma", value=False)
+                        with gr.Row():
+                            kidney_issue = gr.Checkbox(label="Kidney issue", value=False)
+                            liver_issue = gr.Checkbox(label="Liver issue", value=False)
 
-        generate_btn = gr.Button(
-            "Generate my guide →", variant="primary", size="lg")
+                    other_conditions = gr.Textbox(
+                        label="Other conditions",
+                        placeholder="e.g. G6PD deficiency, stomach ulcer",
+                        lines=1,
+                    )
+                    allergies = gr.Textbox(
+                        label="Known allergies",
+                        placeholder="e.g. penicillin, sulfa, aspirin",
+                        lines=1,
+                    )
+                    other_medications = gr.Textbox(
+                        label="Current medications",
+                        placeholder="e.g. aspirin, metformin, lisinopril",
+                        lines=1,
+                    )
 
-        gr.HTML("<div style='font-size:13px;font-weight:700;color:#1A202C;"
-                "margin:14px 12px 6px;'>Your guide</div>")
+                with gr.Group(elem_classes=["step-card"]):
+                    gr.HTML(
+                        """
+                        <div class="step-heading">
+                          <div class="step-num">2</div>
+                          <div><strong>Medication</strong><span>Scan the package or type the medicine name manually.</span></div>
+                        </div>
+                        """
+                    )
+                    image_input = gr.Image(
+                        type="pil",
+                        label="Scan medicine box or label (optional)",
+                        sources=["upload", "webcam", "clipboard"],
+                        height=210,
+                    )
+                    scan_btn = gr.Button("🔍 Scan image", variant="secondary", size="sm")
+                    scan_status = gr.HTML(value="")
+                    drug_input = gr.Textbox(
+                        label="Medicine name",
+                        placeholder="e.g. metformin, ibuprofen, warfarin",
+                        lines=1,
+                    )
+                    gr.HTML(
+                        """
+                        <div class="helper-note">
+                          Tip: DailyMed works best with US generic names. For example, try
+                          <strong>acetaminophen</strong> or <strong>paracetamol</strong> instead of a local brand name.
+                        </div>
+                        """
+                    )
 
-        output = gr.HTML(
-            value="<div style='color:#718096;font-size:13px;padding:2rem 1rem;"
-                  "text-align:center;background:#ffffff;border-radius:14px;"
-                  "border:1.5px dashed #E2E8F0;margin:0 12px;'>"
-                  "Complete the steps above to generate your guide.</div>")
+                with gr.Group(elem_classes=["step-card"]):
+                    gr.HTML(
+                        """
+                        <div class="step-heading">
+                          <div class="step-num">3</div>
+                          <div><strong>Generate guide</strong><span>Review the detected medicine name before generating.</span></div>
+                        </div>
+                        """
+                    )
+                    generate_btn = gr.Button("Generate my guide →", variant="primary", size="lg")
 
-        gr.HTML("""<div style="text-align:center;padding:16px 0 4px;">
-          <div style="font-size:10px;color:#A0AEC0;line-height:1.6;">
-            Gemma 4 · NIH DailyMed · Apache 2.0 ·
-            <a href="https://github.com/LorraineWong/legimed"
-               style="color:#00A878;text-decoration:none;">GitHub</a>
-          </div></div>""")
+            with gr.Column(scale=6, min_width=340):
+                with gr.Group(elem_classes=["step-card"]):
+                    gr.HTML(
+                        """
+                        <div class="step-heading">
+                          <div class="step-num">✓</div>
+                          <div><strong>Your guide</strong><span>Personalized medication information appears below.</span></div>
+                        </div>
+                        """
+                    )
+                    output = gr.HTML(value=DEFAULT_OUTPUT_HTML)
+
+        gr.HTML(
+            """
+            <div style="text-align:center;padding:14px 0 0;color:#94A3B8;font-size:11px;line-height:1.7;">
+              Gemma · NIH DailyMed · Apache 2.0 ·
+              <a href="https://github.com/LorraineWong/legimed" style="color:#047857;text-decoration:none;font-weight:700;">GitHub</a><br>
+              For reference only. Always consult a qualified healthcare professional.
+            </div>
+            """
+        )
 
         scan_btn.click(
-            fn=lambda: (gr.update(interactive=False), ""),
-            inputs=None, outputs=[scan_btn, scan_status], queue=False
+            fn=lambda: (gr.update(interactive=False), _status_html("info", "Scanning image...")),
+            inputs=None,
+            outputs=[scan_btn, scan_status],
+            queue=False,
         ).then(
-            fn=_scan, inputs=[image_input], outputs=[drug_input, scan_status]
+            fn=_scan,
+            inputs=[image_input],
+            outputs=[drug_input, scan_status],
         ).then(
             fn=lambda: gr.update(interactive=True),
-            inputs=None, outputs=[scan_btn], queue=False
+            inputs=None,
+            outputs=[scan_btn],
+            queue=False,
         )
 
+        generate_inputs = [
+            drug_input,
+            age_group,
+            sex,
+            pregnant,
+            breastfeeding,
+            heart_condition,
+            diabetes,
+            hypertension,
+            asthma,
+            kidney_issue,
+            liver_issue,
+            other_conditions,
+            allergies,
+            other_medications,
+        ]
+
         generate_btn.click(
-            fn=lambda: ("<div style='text-align:center;padding:2rem 1rem;"
-                        "color:#00A878;font-size:13px;background:#ffffff;"
-                        "border-radius:14px;margin:0 12px;'>⏳ Generating…<br>"
-                        "<span style='font-size:11px;color:#718096;'>"
-                        "About 45 seconds</span></div>"),
-            inputs=None, outputs=output, queue=False
+            fn=lambda: LOADING_HTML,
+            inputs=None,
+            outputs=output,
+            queue=False,
         ).then(
             fn=_generate,
-            inputs=[drug_input, profile_state],
-            outputs=output
+            inputs=generate_inputs,
+            outputs=output,
         )
 
     return demo
