@@ -3,10 +3,7 @@ import re
 
 
 def personalise(drug_info: DrugInfo, profile: UserProfile) -> DrugInfo:
-    """
-    Re-prioritise warnings based on user health profile.
-    Higher-risk warnings for this user float to the top.
-    """
+    """Re-prioritise warnings based on user health profile."""
     priority = []
     standard = []
 
@@ -37,19 +34,27 @@ def personalise(drug_info: DrugInfo, profile: UserProfile) -> DrugInfo:
                 is_priority = True
 
         if profile.heart_condition:
-            if any(w in text_lower for w in ["heart", "cardiac", "cardiovascular", "arrhythmia"]):
+            if any(w in text_lower for w in [
+                "heart", "cardiac", "cardiovascular", "arrhythmia"
+            ]):
                 is_priority = True
 
         if profile.diabetes:
-            if any(w in text_lower for w in ["diabetes", "diabetic", "glucose", "blood sugar", "insulin"]):
+            if any(w in text_lower for w in [
+                "diabetes", "diabetic", "glucose", "blood sugar", "insulin"
+            ]):
                 is_priority = True
 
         if profile.hypertension:
-            if any(w in text_lower for w in ["blood pressure", "hypertension", "hypotension"]):
+            if any(w in text_lower for w in [
+                "blood pressure", "hypertension", "hypotension"
+            ]):
                 is_priority = True
 
         if profile.asthma:
-            if any(w in text_lower for w in ["asthma", "bronchospasm", "respiratory", "breathing"]):
+            if any(w in text_lower for w in [
+                "asthma", "bronchospasm", "respiratory", "breathing"
+            ]):
                 is_priority = True
 
         if profile.other_medications:
@@ -66,46 +71,19 @@ def personalise(drug_info: DrugInfo, profile: UserProfile) -> DrugInfo:
     return drug_info
 
 
-def build_profile_context(profile: UserProfile) -> str:
-    """Convert UserProfile into a plain English description."""
-    parts = []
-
-    age_map = {
-        "child": "a child (under 12)",
-        "adult": "an adult (18-64)",
-        "elderly": "a senior patient (65+)"
-    }
-    parts.append(age_map.get(profile.age_group, "an adult"))
-
-    if profile.pregnant:
-        parts.append("who is pregnant")
-    if profile.breastfeeding:
-        parts.append("who is breastfeeding")
-    if profile.kidney_issue:
-        parts.append("with a kidney condition")
-    if profile.liver_issue:
-        parts.append("with a liver condition")
-    if profile.other_medications:
-        meds = ", ".join(profile.other_medications)
-        parts.append(f"also taking {meds}")
-    if profile.allergies:
-        allergies = ", ".join(profile.allergies)
-        parts.append(f"with known allergies to {allergies}")
-
-    return " ".join(parts)
+def _truncate(text: str, max_chars: int = 100) -> str:
+    """Truncate warning text to max_chars, ending at a word boundary."""
+    if len(text) <= max_chars:
+        return text
+    truncated = text[:max_chars].rsplit(" ", 1)[0]
+    return truncated.rstrip(".,;") + "…"
 
 
 def _safe_amount(amount: str) -> str:
-    """
-    Return amount only if it looks like a valid dosage string.
-    Prevents garbled Gemma output from appearing in the summary sentence.
-    """
     if not amount:
         return ""
-    # Must contain a digit or a known dosage word
     if not re.search(r'\d|tablet|capsule|drop|patch|unit', amount, re.IGNORECASE):
         return ""
-    # Must not be suspiciously long or contain semicolons / slashes
     if len(amount) > 20 or any(c in amount for c in [';', '/', '\\']):
         return ""
     return amount
@@ -113,12 +91,12 @@ def _safe_amount(amount: str) -> str:
 
 def generate_personal_summary(drug_info: DrugInfo, profile: UserProfile) -> str:
     """
-    Generate a personalised plain-English 3-sentence summary using Python logic.
-    No second AI call — saves GPU memory and is fully deterministic.
+    2-sentence personalised summary. No AI call — deterministic.
+    Sentence 1: dosage. Sentence 2: key risk for this profile.
     """
     lines = []
 
-    # Sentence 1: dosage fact
+    # Sentence 1: dosage
     if drug_info.dosage_instructions:
         d = drug_info.dosage_instructions[0]
         amount = _safe_amount(d.amount)
@@ -134,41 +112,33 @@ def generate_personal_summary(drug_info: DrugInfo, profile: UserProfile) -> str:
                 f"{food_str}, at the same time each day."
             )
 
-    # Sentence 2: most relevant risk for this profile
+    # Sentence 2: top risk for this profile
     risk_parts = []
+    if profile.pregnant:
+        risk_parts.append("may not be safe during pregnancy — confirm with your doctor immediately")
     if profile.age_group == "elderly":
-        risk_parts.append("as a senior patient, fall-related bleeding is a serious concern")
+        risk_parts.append("fall-related bleeding is a serious concern for senior patients")
     if profile.kidney_issue:
         risk_parts.append("your kidney condition may affect how this drug is processed")
+    if profile.liver_issue:
+        risk_parts.append("your liver condition requires extra caution with this drug")
     if profile.heart_condition:
-        risk_parts.append("your heart condition requires careful monitoring with this drug")
+        risk_parts.append("monitor your heart condition carefully while taking this drug")
     if profile.diabetes:
-        risk_parts.append("monitor your blood sugar levels closely while taking this drug")
+        risk_parts.append("monitor your blood sugar closely while taking this drug")
     if profile.hypertension:
         risk_parts.append("this drug may affect your blood pressure")
-    if profile.pregnant:
-        risk_parts.append("this drug may not be safe during pregnancy — confirm with your doctor immediately")
     if profile.other_medications:
         meds = ", ".join(profile.other_medications[:2])
-        risk_parts.append(f"taking {meds} alongside this drug requires careful monitoring")
+        risk_parts.append(f"taking {meds} alongside requires careful monitoring")
 
     if risk_parts:
-        lines.append("Important for you: " + "; ".join(risk_parts) + ".")
+        # Only use the top 2 most relevant risks
+        lines.append("Important: " + "; ".join(risk_parts[:2]) + ".")
     elif drug_info.warnings:
-        # Use first warning but ensure it ends with a period
-        w_text = drug_info.warnings[0].text.strip()
+        w_text = _truncate(drug_info.warnings[0].text, 100)
         if not w_text.endswith("."):
             w_text += "."
         lines.append(w_text)
-
-    # Sentence 3: key food warning or emergency sign
-    avoid_foods = [fi.substance for fi in drug_info.food_interactions if fi.action == "avoid"]
-    if avoid_foods:
-        food_str = ", ".join(avoid_foods[:2])
-        lines.append(f"Avoid {food_str} while taking this medication.")
-    elif drug_info.emergency_signs:
-        lines.append(
-            f"Seek emergency help immediately if you experience: {drug_info.emergency_signs[0]}."
-        )
 
     return " ".join(lines)
