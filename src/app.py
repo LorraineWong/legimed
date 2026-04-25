@@ -210,41 +210,22 @@ def generate_guide(drug_name, age_group, pregnant,
         return f"<div style='color:#991B1B;padding:1rem;'>Error: {str(e)}</div>"
 
 
-def build_demo(model, tokenizer, processor):
+def build_demo(model, tokenizer, processor=None):
+    tess_ok, tess_msg = tesseract_status()
+    tess_badge = (
+        f"<span style='color:#065F46;background:#D1FAE5;padding:3px 9px;"
+        f"border-radius:5px;font-size:11px;'>✅ {tess_msg}</span>"
+        if tess_ok else
+        f"<span style='color:#991B1B;background:#FEE2E2;padding:3px 9px;"
+        f"border-radius:5px;font-size:11px;'>⚠️ {tess_msg}</span>"
+    )
 
     def _scan(pil_image):
         return scan_image(pil_image, model, tokenizer, processor)
 
-    def _generate(drug_name, age_group, sex, pregnant, breastfeeding,
-                  kidney_issue, liver_issue, heart_condition, diabetes,
-                  hypertension, asthma, other_conditions, other_meds):
-        from extract import extract_drug_info_robust
-        try:
-            if not drug_name.strip():
-                return "<div style='color:#E53E3E;padding:1rem;'>Please enter a drug name first.</div>"
-            leaflet_text = get_drug_leaflet(drug_name.strip())
-            if not leaflet_text:
-                return f"<div style='padding:1rem;color:#92400E;background:#FEF3C7;border-radius:12px;'>'{drug_name}' not found in DailyMed. Try the generic name.</div>"
-            profile = UserProfile(
-                age_group=age_group,
-                sex=sex,
-                pregnant=pregnant,
-                breastfeeding=breastfeeding,
-                kidney_issue=kidney_issue,
-                liver_issue=liver_issue,
-                heart_condition=heart_condition,
-                diabetes=diabetes,
-                hypertension=hypertension,
-                asthma=asthma,
-                other_conditions=other_conditions,
-                other_medications=[m.strip() for m in other_meds.split(",") if m.strip()]
-            )
-            drug_info = extract_drug_info_robust(leaflet_text, model, tokenizer)
-            drug_info = personalise(drug_info, profile)
-            summary = generate_personal_summary(drug_info, profile)
-            return format_html_output(drug_info, summary)
-        except Exception as e:
-            return f"<div style='color:#E53E3E;padding:1rem;'>Error: {str(e)}</div>"
+    def _generate(drug_name, age_group, pregnant, kidney_issue, liver_issue, other_meds):
+        return generate_guide(drug_name, age_group, pregnant,
+                              kidney_issue, liver_issue, other_meds, model, tokenizer)
 
     with gr.Blocks(
         title="Legimed",
@@ -257,126 +238,80 @@ def build_demo(model, tokenizer, processor):
             padding: 0 12px 40px !important;
         }
         footer { display: none !important; }
-        .gr-button-primary {
-            background: linear-gradient(135deg, #00A878, #00875F) !important;
-            border: none !important;
-            border-radius: 999px !important;
-            font-size: 15px !important;
-            font-weight: 600 !important;
-            padding: 14px !important;
-            color: white !important;
+        .legimed-step {
+            display:flex; align-items:center; gap:10px; margin: 10px 0 8px; color:#1A202C;
+            font-size:13px; font-weight:700;
         }
-        .gr-button-secondary {
-            border-radius: 999px !important;
-            border: 1.5px solid #00A878 !important;
-            color: #00A878 !important;
-            font-weight: 500 !important;
+        .legimed-step .num {
+            width:24px; height:24px; border-radius:999px; background:#00A878; color:#fff;
+            display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:800;
+            box-shadow:0 2px 6px rgba(0,168,120,0.3);
         }
-        label { font-size: 13px !important; color: #1A202C !important; }
-        input, textarea { border-radius: 12px !important; border: 1.5px solid #E2E8F0 !important; }
+        .scan-zone { border:2px dashed #B2F5EA; border-radius:18px; padding:10px; background:#F8FFFD; }
+        .scan-or-type { text-align:center; color:#718096; font-size:11px; margin:8px 0; }
+        .gradio-container .legimed-primary button {
+            width:100%; border-radius:999px !important; border:none !important;
+            background:linear-gradient(135deg,#00A878,#00875F) !important;
+            font-weight:800 !important; font-size:15px !important; padding:14px 16px !important;
+        }
+        .gradio-container .toggle-card { border:1px solid #E2E8F0; border-radius:14px; padding:8px 10px; }
+        .gradio-container .wrap .gr-radio { gap:8px; }
+        .gradio-container .wrap .gr-radio label {
+            border:1px solid #B2F5EA !important; border-radius:999px !important;
+            background:#F8FFFD !important; padding:8px 14px !important;
+        }
+        .gradio-container .wrap .gr-radio label:has(input:checked) {
+            background:#E6FFFA !important; border-color:#00A878 !important;
+            color:#065F46 !important; font-weight:700 !important;
+        }
         """
     ) as demo:
 
         gr.HTML("""
-        <div style="text-align:center;padding:28px 0 16px;">
-          <div style="font-size:32px;">💊</div>
-          <div style="font-size:24px;font-weight:700;color:#1A202C;margin-top:4px;letter-spacing:-0.5px;">
-            Legimed
-          </div>
-          <div style="font-size:13px;color:#718096;margin-top:4px;">
-            Your medication, made legible
-          </div>
-        </div>
-        """)
+        <div style="text-align:center;padding:20px 0 10px;">
+          <div style="font-size:38px;line-height:1;">💊</div>
+          <div style="font-size:30px;font-weight:800;color:#1A202C;line-height:1.1;margin-top:2px;">Legimed</div>
+          <div style="font-size:13px;color:#718096;margin-top:6px;line-height:1.5;">
+            Your medication, made legible</div>
+        </div>""")
 
-        # ── STEP 1: Profile ──────────────────────────────
-        gr.HTML("""
-        <div style="display:flex;align-items:center;gap:10px;margin:8px 0 12px;">
-          <div style="width:28px;height:28px;border-radius:50%;background:#00A878;
-                      color:white;font-size:13px;font-weight:700;display:flex;
-                      align-items:center;justify-content:center;flex-shrink:0;">1</div>
-          <div style="font-size:15px;font-weight:600;color:#1A202C;">Your health profile</div>
-        </div>
-        """)
-
+        # Step 1: Image scan
+        gr.HTML("<div class='legimed-step'><span class='num'>1</span><span>Scan medicine box or type drug name</span></div>")
         with gr.Group():
-            with gr.Row():
-                age_input = gr.Radio(
-                    choices=["child", "adult", "elderly"],
-                    value="adult",
-                    label="Age group"
-                )
-                sex_input = gr.Radio(
-                    choices=["male", "female", "prefer not to say"],
-                    value="prefer not to say",
-                    label="Sex"
-                )
-            with gr.Row():
-                preg_input = gr.Checkbox(label="🤰 Pregnant")
-                bf_input = gr.Checkbox(label="🍼 Breastfeeding")
-            gr.HTML("<div style='font-size:12px;color:#718096;margin:8px 0 4px;'>Chronic conditions (select all that apply)</div>")
-            with gr.Row():
-                heart_input = gr.Checkbox(label="❤️ Heart condition")
-                db_input = gr.Checkbox(label="🩸 Diabetes")
-            with gr.Row():
-                bp_input = gr.Checkbox(label="💉 Hypertension")
-                asthma_input = gr.Checkbox(label="🫁 Asthma")
-            with gr.Row():
-                kidney_input = gr.Checkbox(label="🫘 Kidney condition")
-                liver_input = gr.Checkbox(label="🫀 Liver condition")
-            other_cond_input = gr.Textbox(
-                label="Other conditions",
-                placeholder="e.g. thyroid disorder, epilepsy"
-            )
-            meds_input = gr.Textbox(
-                label="💊 Current medications",
-                placeholder="e.g. aspirin, metformin, lisinopril"
-            )
-
-        # ── STEP 2: Medication ───────────────────────────
-        gr.HTML("""
-        <div style="display:flex;align-items:center;gap:10px;margin:20px 0 12px;">
-          <div style="width:28px;height:28px;border-radius:50%;background:#00A878;
-                      color:white;font-size:13px;font-weight:700;display:flex;
-                      align-items:center;justify-content:center;flex-shrink:0;">2</div>
-          <div style="font-size:15px;font-weight:600;color:#1A202C;">Your medication</div>
-        </div>
-        """)
-
-        with gr.Group():
+            gr.HTML("<div style='font-size:12px;color:#718096;margin-bottom:6px;'>📷 Upload a medicine photo for automatic detection</div>")
             image_input = gr.Image(
                 type="pil",
-                label="📷 Scan medicine box (optional)",
+                label="Camera / Upload",
                 sources=["upload", "webcam", "clipboard"],
-                height=180,
+                height=200,
+                elem_classes=["scan-zone"]
             )
             scan_btn = gr.Button("🔍 Scan image", variant="secondary", size="sm")
             scan_status = gr.HTML(value="")
-            gr.HTML("<div style='text-align:center;color:#718096;font-size:12px;padding:6px 0;'>— or type below —</div>")
+            gr.HTML("<div class='scan-or-type'>— or type below —</div>")
             drug_input = gr.Textbox(
-                label="💊 Drug name",
-                placeholder="e.g. Panadol, Warfarin, Metformin",
+                label="🔎 Drug name",
+                placeholder="Auto-filled after scan, or type here",
+                scale=1
             )
 
-        # ── STEP 3: Generate ─────────────────────────────
-        gr.HTML("""
-        <div style="display:flex;align-items:center;gap:10px;margin:20px 0 12px;">
-          <div style="width:28px;height:28px;border-radius:50%;background:#00A878;
-                      color:white;font-size:13px;font-weight:700;display:flex;
-                      align-items:center;justify-content:center;flex-shrink:0;">3</div>
-          <div style="font-size:15px;font-weight:600;color:#1A202C;">Generate your guide</div>
-        </div>
-        """)
+        # Step 2: Profile
+        gr.HTML("<div class='legimed-step'><span class='num'>2</span><span>Your health profile</span></div>")
+        with gr.Group():
+            age_input  = gr.Radio(choices=["adult", "elderly"], value="adult", label="👤 Age group", info="Select one")
+            preg_input = gr.Checkbox(label="🤰 Pregnant or breastfeeding", elem_classes=["toggle-card"])
+            kid_input  = gr.Checkbox(label="🫘 Kidney condition", elem_classes=["toggle-card"])
+            liv_input  = gr.Checkbox(label="🫀 Liver condition", elem_classes=["toggle-card"])
+            meds_input = gr.Textbox(label="💊 Other medications", placeholder="e.g. aspirin, metformin")
 
-        generate_btn = gr.Button("Generate my guide →", variant="primary", size="lg")
+        # Step 3: Generate
+        gr.HTML("<div class='legimed-step'><span class='num'>3</span><span>Generate your personalised guide</span></div>")
+        generate_btn = gr.Button("Generate my guide →", variant="primary", size="lg", elem_classes=["legimed-primary"])
 
-        gr.HTML("<div style='font-size:14px;font-weight:600;color:#1A202C;margin:16px 0 8px;'>Your guide</div>")
+        gr.HTML("<div style='font-size:13px;font-weight:700;color:#1A202C;margin:12px 0 6px;'>Your guide</div>")
         output = gr.HTML(
-            value="""
-            <div style='text-align:center;padding:40px 20px;color:#718096;font-size:13px;
-                        background:white;border-radius:16px;border:1.5px dashed #E2E8F0;'>
-              Complete the steps above to generate your personalised medication guide.
-            </div>"""
+            value="<div style='color:#718096;font-size:13px;padding:1rem;text-align:center;'>"
+                  "Complete steps above to generate your guide.</div>"
         )
 
         gr.HTML("""
