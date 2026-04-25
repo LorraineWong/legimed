@@ -479,30 +479,103 @@ def build_demo(model, tokenizer, processor=None):
         border-radius: 14px !important;
     }
 
+    .gradio-container button,
+    .gradio-container button span {
+        color: inherit !important;
+        filter: none !important;
+        text-shadow: none !important;
+    }
+
     .gradio-container button.primary,
-    .gradio-container .primary {
+    .gradio-container .primary,
+    .gradio-container button[variant="primary"] {
         background: linear-gradient(135deg, #00A878, #047857) !important;
         color: #FFFFFF !important;
         border: none !important;
         border-radius: 16px !important;
-        font-weight: 800 !important;
-        box-shadow: 0 14px 28px rgba(0, 168, 120, 0.24) !important;
+        font-weight: 850 !important;
+        box-shadow: 0 14px 28px rgba(0, 168, 120, 0.22) !important;
     }
 
     .gradio-container button.secondary,
-    .gradio-container .secondary {
-        background: #F8FAFC !important;
-        color: var(--legi-text) !important;
-        border: 1px solid var(--legi-border) !important;
+    .gradio-container .secondary,
+    .gradio-container button[variant="secondary"] {
+        background: #FFFFFF !important;
+        color: #0F172A !important;
+        border: 1px solid #CBD5E1 !important;
         border-radius: 14px !important;
-        font-weight: 700 !important;
+        font-weight: 750 !important;
+        box-shadow: 0 6px 16px rgba(15, 23, 42, 0.06) !important;
+    }
+
+    .gradio-container button.secondary:hover,
+    .gradio-container button[variant="secondary"]:hover {
+        background: #F8FAFC !important;
+        border-color: #00A878 !important;
+        color: #047857 !important;
+    }
+
+    .gradio-container .radio label,
+    .gradio-container .checkbox label,
+    .gradio-container .checkboxgroup label,
+    .gradio-container [role="radio"],
+    .gradio-container [role="checkbox"] {
+        background: #FFFFFF !important;
+        color: #0F172A !important;
+        border-color: #E2E8F0 !important;
+        box-shadow: none !important;
+        filter: none !important;
+    }
+
+    .gradio-container input[type="radio"],
+    .gradio-container input[type="checkbox"] {
+        accent-color: #00A878 !important;
+    }
+
+    .gradio-container .radio input:checked + span,
+    .gradio-container .checkbox input:checked + span {
+        color: #047857 !important;
+        font-weight: 800 !important;
     }
 
     .helper-note {
-        color: var(--legi-muted);
+        color: #475569;
         font-size: 12px;
-        line-height: 1.6;
-        margin-top: 8px;
+        line-height: 1.65;
+        margin-top: 10px;
+        background: #F8FAFC;
+        border: 1px solid #E2E8F0;
+        border-radius: 14px;
+        padding: 10px 12px;
+    }
+
+    .helper-note strong {
+        color: #047857;
+        font-weight: 800;
+    }
+
+    .trust-strip {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 8px;
+        margin-bottom: 14px;
+    }
+
+    .trust-item {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        background: #F8FAFC;
+        border: 1px solid #E2E8F0;
+        color: #334155;
+        border-radius: 14px;
+        padding: 10px 12px;
+        font-size: 12px;
+        line-height: 1.45;
+    }
+
+    .trust-item strong {
+        color: #0F172A;
     }
 
     .status-box {
@@ -612,6 +685,13 @@ def build_demo(model, tokenizer, processor=None):
     .warning-card li { color: #78350F; }
     .guide-footer { color: #94A3B8; font-size: 11px; line-height: 1.7; text-align: center; padding: 8px 4px 2px; }
 
+    .gradio-container .wrap.svelte-1gfkn6j,
+    .gradio-container .block.svelte-1gfkn6j,
+    .gradio-container .form.svelte-1gfkn6j {
+        box-shadow: none !important;
+        background: #FFFFFF !important;
+    }
+
     @media (max-width: 720px) {
         .legimed-hero { padding: 22px; border-radius: 22px; }
         .dose-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -716,6 +796,7 @@ def build_demo(model, tokenizer, processor=None):
                         """
                     )
 
+            with gr.Column(scale=6, min_width=340):
                 with gr.Group(elem_classes=["step-card"]):
                     gr.HTML(
                         """
@@ -723,11 +804,15 @@ def build_demo(model, tokenizer, processor=None):
                           <div class="step-num">3</div>
                           <div><strong>Generate guide</strong><span>Review the detected medicine name before generating.</span></div>
                         </div>
+                        <div class="trust-strip">
+                          <div class="trust-item">✅ <span><strong>Official source:</strong> based on NIH DailyMed drug labels.</span></div>
+                          <div class="trust-item">🧑‍⚕️ <span><strong>Personalized:</strong> warnings are prioritized by the health profile.</span></div>
+                          <div class="trust-item">⚠️ <span><strong>Safety note:</strong> not a substitute for doctor or pharmacist advice.</span></div>
+                        </div>
                         """
                     )
                     generate_btn = gr.Button("Generate my guide →", variant="primary", size="lg")
 
-            with gr.Column(scale=6, min_width=340):
                 with gr.Group(elem_classes=["step-card"]):
                     gr.HTML(
                         """
