@@ -36,6 +36,22 @@ def personalise(drug_info: DrugInfo, profile: UserProfile) -> DrugInfo:
             if any(w in text_lower for w in ["liver", "hepatic"]):
                 is_priority = True
 
+        if profile.heart_condition:
+            if any(w in text_lower for w in ["heart", "cardiac", "cardiovascular", "arrhythmia"]):
+                is_priority = True
+
+        if profile.diabetes:
+            if any(w in text_lower for w in ["diabetes", "diabetic", "glucose", "blood sugar", "insulin"]):
+                is_priority = True
+
+        if profile.hypertension:
+            if any(w in text_lower for w in ["blood pressure", "hypertension", "hypotension"]):
+                is_priority = True
+
+        if profile.asthma:
+            if any(w in text_lower for w in ["asthma", "bronchospasm", "respiratory", "breathing"]):
+                is_priority = True
+
         if profile.other_medications:
             for med in profile.other_medications:
                 if med.lower() in text_lower:
@@ -124,6 +140,12 @@ def generate_personal_summary(drug_info: DrugInfo, profile: UserProfile) -> str:
         risk_parts.append("as a senior patient, fall-related bleeding is a serious concern")
     if profile.kidney_issue:
         risk_parts.append("your kidney condition may affect how this drug is processed")
+    if profile.heart_condition:
+        risk_parts.append("your heart condition requires careful monitoring with this drug")
+    if profile.diabetes:
+        risk_parts.append("monitor your blood sugar levels closely while taking this drug")
+    if profile.hypertension:
+        risk_parts.append("this drug may affect your blood pressure")
     if profile.pregnant:
         risk_parts.append("this drug may not be safe during pregnancy — confirm with your doctor immediately")
     if profile.other_medications:
