@@ -35,36 +35,19 @@ def preprocess_image(pil_image: Image.Image) -> Image.Image:
     return img
 
 
-def image_to_base64(pil_image: Image.Image) -> str:
-    """Convert PIL image to base64 string for Gemma multimodal input."""
-    img = preprocess_image(pil_image)
-    buffer = BytesIO()
-    img.save(buffer, format="JPEG", quality=85)
-    return base64.b64encode(buffer.getvalue()).decode("utf-8")
-
-
 def extract_drug_name_gemma(pil_image: Image.Image, model, tokenizer) -> str:
     """
     Use Gemma 4 vision to extract drug name from medication box photo.
     Returns drug name string, or empty string if not found.
     """
     import torch
+    from transformers import AutoProcessor
 
     prompt = """Look at this medication box or label photo carefully.
 Extract ONLY the drug name (generic or brand name).
 Do not include dosage amounts, manufacturer names, or instructions.
 Reply with just the drug name, nothing else. If you cannot identify a drug name, reply with UNKNOWN."""
 
-    img_b64 = image_to_base64(pil_image)
-
-    # Gemma multimodal input format
-    inputs = tokenizer(
-        f"<start_of_turn>user\n<image>\n{prompt}<end_of_turn>\n<start_of_turn>model\n",
-        return_tensors="pt"
-    ).to(model.device)
-
-    # Add image to inputs
-    from transformers import AutoProcessor
     processor = AutoProcessor.from_pretrained(tokenizer.name_or_path)
 
     inputs = processor(
@@ -86,10 +69,7 @@ Reply with just the drug name, nothing else. If you cannot identify a drug name,
         skip_special_tokens=True
     ).strip()
 
-    # Clean up response
     drug_name = response.strip().split("\n")[0].strip()
-
-    # Strip dosage if attached e.g. "Warfarin 5mg" -> "Warfarin"
     drug_name = re.sub(r'\s+\d+\s*(mg|mcg|ml|%|iu).*$', '', drug_name, flags=re.IGNORECASE).strip()
 
     if not drug_name or drug_name.upper() == "UNKNOWN" or len(drug_name) > 50:
@@ -180,7 +160,7 @@ def guess_drug_name_from_text(text: str) -> str:
 
 def image_to_drug_name(pil_image: Image.Image, model=None, tokenizer=None) -> tuple[str, str]:
     """
-    Main entry point for image tab.
+    Main entry point for image input.
     Primary: Gemma 4 vision (if model provided).
     Fallback: Tesseract OCR + heuristic.
 
@@ -189,7 +169,6 @@ def image_to_drug_name(pil_image: Image.Image, model=None, tokenizer=None) -> tu
         drug_name: best guess, empty string if failed
         method_used: "gemma" | "tesseract" | "failed"
     """
-    # Primary: Gemma vision
     if model is not None and tokenizer is not None:
         print("[vision] Using Gemma 4 vision to identify drug...")
         try:
@@ -202,7 +181,6 @@ def image_to_drug_name(pil_image: Image.Image, model=None, tokenizer=None) -> tu
         except Exception as e:
             print(f"[vision] Gemma vision failed: {e}, falling back to Tesseract...")
 
-    # Fallback: Tesseract
     raw_text = extract_text_tesseract(pil_image)
     drug_name = guess_drug_name_from_text(raw_text)
     method = "tesseract" if drug_name else "failed"
