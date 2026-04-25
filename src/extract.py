@@ -1,55 +1,18 @@
 import json
 import re
-import gc
-import torch
-from schema import DrugInfo, UserProfile
+import os
+import google.generativeai as genai
+from schema import DrugInfo
+
+# Configure Gemini API
+genai.configure(api_key=os.environ.get("GEMINI_API_KEY"))
+model = genai.GenerativeModel("gemini-2.0-flash")
 
 
-def clean_food_action(action: str) -> str:
-    """Map any action string to valid FoodAction enum value."""
-    action_lower = action.lower()
-    if any(w in action_lower for w in ["avoid", "do not", "never", "stop"]):
-        return "avoid"
-    elif any(w in action_lower for w in [
-        "caution", "limit", "monitor", "consistent",
-        "affect", "interact", "inr", "reduce", "increase"
-    ]):
-        return "caution"
-    else:
-        return "ok"
-
-
-def clean_amount(amount: str) -> str:
+def extract_drug_info_robust(leaflet_text: str, _model=None, _processor=None) -> DrugInfo:
     """
-    Sanitise dosage amount string.
-    Removes garbled characters, keeps only the first valid dosage token.
-    Examples: "762;2;AN" -> "", "2 mg to 10 mg" -> "2-10 mg", "1 tablet" -> "1 tablet"
-    """
-    if not amount:
-        return ""
-
-    # Keep only characters that belong in a dosage string
-    cleaned = re.sub(r'[^\w\s\-\.]', ' ', amount)
-    cleaned = re.sub(r'\s+', ' ', cleaned).strip()
-
-    # Must contain at least one digit or known unit word to be valid
-    if not re.search(r'\d|tablet|capsule|drop|patch|unit|ml|mg|mcg', cleaned, re.IGNORECASE):
-        return ""
-
-    # Collapse "X mg to Y mg" -> "X-Y mg"
-    cleaned = re.sub(
-        r'(\d+)\s*(?:mg|mcg|ml)\s+to\s+(\d+\s*(?:mg|mcg|ml))',
-        lambda m: m.group(0).replace(' to ', '-'),
-        cleaned, flags=re.IGNORECASE
-    )
-
-    return cleaned[:30]  # hard cap — no dosage string should be longer than this
-
-
-def extract_drug_info_robust(leaflet_text: str, model, processor) -> DrugInfo:
-    """
-    Extract DrugInfo from leaflet text using Gemma 4.
-    Uses apply_chat_template for correct Gemma 4 formatting.
+    Extract DrugInfo from leaflet text using Gemini API.
+    _model and _processor are kept for API compatibility but not used.
     """
     schema = json.dumps(DrugInfo.model_json_schema(), indent=2)
 
@@ -62,9 +25,10 @@ STRICT OUTPUT RULES:
 - time_of_day MUST be exactly one of: morning, afternoon, evening, bedtime
 - amount MUST be a clean dosage string like "5 mg", "1 tablet", "2-10 mg". No garbled text.
 - warning text MUST be a complete readable sentence in plain English. Never ALL CAPS only.
-- Extract AT LEAST 3 side_effects if mentioned anywhere in the leaflet.
-- Extract AT LEAST 3 food_interactions if mentioned anywhere in the leaflet. food_interactions must only include actual foods, drinks, beverages, or dietary supplements (e.g. alcohol, grapefruit, milk, vitamin K, caffeine). Do NOT include other medications or drugs as food_interactions — drug interactions belong in warnings only.
-- Extract AT LEAST 3 warnings if mentioned anywhere in the leaflet.
+- Extract AT LEAST 3 side_effects with different severity levels and distinct descriptions.
+- Extract AT LEAST 3 food_interactions. Include only actual foods, drinks, or dietary supplements.
+- Extract AT LEAST 3 warnings as complete sentences.
+- emergency_signs must be real medical emergencies only (e.g. severe bleeding, anaphylaxis).
 
 JSON SCHEMA:
 {schema}
@@ -74,39 +38,8 @@ LEAFLET TEXT:
 
 JSON OUTPUT:"""
 
-    messages = [
-        {"role": "user", "content": [{"type": "text", "text": prompt}]}
-    ]
-
-    inputs = processor.apply_chat_template(
-        messages,
-        add_generation_prompt=True,
-        tokenize=True,
-        return_dict=True,
-        return_tensors="pt"
-    ).to(model.device, dtype=torch.bfloat16)
-
-    input_len = inputs["input_ids"].shape[-1]
-
-    with torch.no_grad():
-        outputs = model.generate(
-            **inputs,
-            max_new_tokens=2400,
-            temperature=0,
-            do_sample=False,
-        )
-
-    response = processor.decode(
-        outputs[0][input_len:],
-        skip_special_tokens=True
-    )
-
-    del inputs, outputs
-    gc.collect()
-    torch.cuda.empty_cache()
-
-    # Strip markdown fences if present
-    cleaned = response.strip()
+    response = model.generate_content(prompt)
+    cleaned = response.text.strip()
     cleaned = re.sub(r'^```json\s*', '', cleaned)
     cleaned = re.sub(r'^```\s*', '', cleaned)
     cleaned = re.sub(r'\s*```$', '', cleaned)
@@ -115,9 +48,16 @@ JSON OUTPUT:"""
     data = json.loads(cleaned)
 
     # Auto-correct food_interactions action
+    valid_actions = ["avoid", "caution", "ok"]
     for fi in data.get("food_interactions", []):
-        if fi.get("action") not in ["avoid", "caution", "ok"]:
-            fi["action"] = clean_food_action(fi.get("action", ""))
+        if fi.get("action") not in valid_actions:
+            action_lower = fi.get("action", "").lower()
+            if any(w in action_lower for w in ["avoid", "do not", "never"]):
+                fi["action"] = "avoid"
+            elif any(w in action_lower for w in ["caution", "limit", "monitor"]):
+                fi["action"] = "caution"
+            else:
+                fi["action"] = "ok"
 
     # Auto-correct side_effects severity
     for se in data.get("side_effects", []):
@@ -129,10 +69,8 @@ JSON OUTPUT:"""
     for di in data.get("dosage_instructions", []):
         if di.get("time_of_day") not in valid_times:
             di["time_of_day"] = "morning"
-        # Clean amount field
-        di["amount"] = clean_amount(di.get("amount", ""))
 
-    # Normalise warning text: sentence-case if ALL CAPS
+    # Normalise warning text
     for w in data.get("warnings", []):
         text = w.get("text", "")
         if text == text.upper() and len(text) > 3:
