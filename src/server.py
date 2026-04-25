@@ -290,8 +290,12 @@ async def generate(req: GenerateRequest):
 # ── Launch ─────────────────────────────────────────────────────────────────────
 
 def launch(model, tokenizer, processor=None, port=7860):
+    import asyncio
     global _model, _tokenizer, _processor
     _model = model
     _tokenizer = tokenizer
     _processor = processor
-    uvicorn.run(app, host="0.0.0.0", port=port, log_level="warning")
+
+    config = uvicorn.Config(app, host="0.0.0.0", port=port, log_level="warning")
+    server = uvicorn.Server(config)
+    asyncio.get_event_loop().run_until_complete(server.serve())
